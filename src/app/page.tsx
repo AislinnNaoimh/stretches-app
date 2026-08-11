@@ -13,7 +13,13 @@ type Stretch = {
   focus: string;
 };
 
-const stretches: Stretch[] = [
+type ProgressState = {
+  completedSessions: number;
+  totalMinutes: number;
+  lastCompletedDate: string | null;
+};
+
+const defaultRoutine: Stretch[] = [
   {
     name: "Neck release",
     area: "Upper body",
@@ -70,31 +76,84 @@ const paceMultiplier: Record<Pace, number> = {
   deep: 1.2
 };
 
+const routineStorageKey = "stretch-routine-v1";
+const progressStorageKey = "stretch-progress-v1";
+
+function loadSavedRoutine(): Stretch[] {
+  if (typeof window === "undefined") return defaultRoutine;
+
+  const saved = window.localStorage.getItem(routineStorageKey);
+  if (!saved) return defaultRoutine;
+
+  try {
+    const parsed = JSON.parse(saved) as Stretch[];
+    return parsed.length > 0 ? parsed : defaultRoutine;
+  } catch {
+    return defaultRoutine;
+  }
+}
+
+function loadSavedProgress(): ProgressState {
+  if (typeof window === "undefined") {
+    return { completedSessions: 0, totalMinutes: 0, lastCompletedDate: null };
+  }
+
+  const saved = window.localStorage.getItem(progressStorageKey);
+  if (!saved) {
+    return { completedSessions: 0, totalMinutes: 0, lastCompletedDate: null };
+  }
+
+  try {
+    return JSON.parse(saved) as ProgressState;
+  } catch {
+    return { completedSessions: 0, totalMinutes: 0, lastCompletedDate: null };
+  }
+}
+
 export default function Home() {
+  const [routine, setRoutine] = useState<Stretch[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [pace, setPace] = useState<Pace>("steady");
   const [isRunning, setIsRunning] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(stretches[0].duration);
+  const [secondsLeft, setSecondsLeft] = useState(0);
   const [completed, setCompleted] = useState<number[]>([]);
-
-  const activeStretch = stretches[activeIndex];
-  const adjustedDuration = Math.round(activeStretch.duration * paceMultiplier[pace]);
-  const routineLength = useMemo(
-    () => stretches.reduce((total, stretch) => total + stretch.duration, 0),
-    []
-  );
-  const progress = ((activeIndex + 1) / stretches.length) * 100;
-  const sessionComplete = completed.length >= stretches.length;
-
-  useEffect(() => {
-    setSecondsLeft(adjustedDuration);
-    if (isRunning) {
-      setIsRunning(false);
-    }
-  }, [activeIndex, pace]);
+  const [showEditor, setShowEditor] = useState(false);
+  const [progress, setProgress] = useState<ProgressState>({
+    completedSessions: 0,
+    totalMinutes: 0,
+    lastCompletedDate: null
+  });
+  const [customStretch, setCustomStretch] = useState({
+    name: "",
+    area: "",
+    duration: "30",
+    note: "",
+    cue: "",
+    focus: "Mobility"
+  });
 
   useEffect(() => {
-    if (!isRunning) return;
+    setRoutine(loadSavedRoutine());
+    setProgress(loadSavedProgress());
+  }, []);
+
+  useEffect(() => {
+    if (routine.length === 0) return;
+    window.localStorage.setItem(routineStorageKey, JSON.stringify(routine));
+  }, [routine]);
+
+  useEffect(() => {
+    window.localStorage.setItem(progressStorageKey, JSON.stringify(progress));
+  }, [progress]);
+
+  useEffect(() => {
+    if (!routine.length) return;
+    setSecondsLeft(Math.round(routine[activeIndex].duration * paceMultiplier[pace]));
+    setIsRunning(false);
+  }, [activeIndex, pace, routine]);
+
+  useEffect(() => {
+    if (!routine.length || !isRunning) return;
 
     const timer = window.setInterval(() => {
       setSecondsLeft((current) => {
@@ -103,7 +162,7 @@ export default function Home() {
             existing.includes(activeIndex) ? existing : [...existing, activeIndex]
           );
 
-          if (activeIndex === stretches.length - 1) {
+          if (activeIndex === routine.length - 1) {
             setIsRunning(false);
             return 0;
           }
@@ -117,18 +176,43 @@ export default function Home() {
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [activeIndex, isRunning]);
+  }, [activeIndex, isRunning, routine]);
+
+  const activeStretch = routine[activeIndex] ?? routine[0];
+  const adjustedDuration = activeStretch ? Math.round(activeStretch.duration * paceMultiplier[pace]) : 0;
+  const routineLength = useMemo(
+    () => routine.reduce((total, stretch) => total + stretch.duration, 0),
+    [routine]
+  );
+  const progressPercent = routine.length ? ((activeIndex + 1) / routine.length) * 100 : 0;
+  const sessionComplete = routine.length > 0 && completed.length >= routine.length;
+
+  useEffect(() => {
+    if (!sessionComplete) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const totalRoutineMinutes = Math.round(routineLength / 60);
+
+    setProgress((current) => ({
+      completedSessions: current.completedSessions + 1,
+      totalMinutes: current.totalMinutes + totalRoutineMinutes,
+      lastCompletedDate: today
+    }));
+    setCompleted([]);
+  }, [sessionComplete]);
 
   const handleStretchChange = (nextIndex: number) => {
+    if (!routine.length) return;
     setActiveIndex(nextIndex);
     setIsRunning(false);
-    setSecondsLeft(Math.round(stretches[nextIndex].duration * paceMultiplier[pace]));
+    setSecondsLeft(Math.round(routine[nextIndex].duration * paceMultiplier[pace]));
   };
 
   const handleNext = () => {
-    if (activeIndex === stretches.length - 1) {
+    if (!routine.length) return;
+    if (activeIndex === routine.length - 1) {
       setActiveIndex(0);
-      setSecondsLeft(Math.round(stretches[0].duration * paceMultiplier[pace]));
+      setSecondsLeft(Math.round(routine[0].duration * paceMultiplier[pace]));
       setIsRunning(false);
       return;
     }
@@ -140,8 +224,62 @@ export default function Home() {
     setActiveIndex(0);
     setCompleted([]);
     setIsRunning(false);
-    setSecondsLeft(Math.round(stretches[0].duration * paceMultiplier[pace]));
+    if (routine.length) {
+      setSecondsLeft(Math.round(routine[0].duration * paceMultiplier[pace]));
+    }
   };
+
+  const addCustomStretch = () => {
+    const name = customStretch.name.trim();
+    const area = customStretch.area.trim() || "Custom";
+    const duration = Number(customStretch.duration) || 30;
+
+    if (!name) return;
+
+    const newStretch: Stretch = {
+      name,
+      area,
+      duration,
+      note: customStretch.note.trim() || "Move slowly and focus on your breathing.",
+      cue: customStretch.cue.trim() || "Keep the movement smooth",
+      focus: customStretch.focus || "Mobility"
+    };
+
+    setRoutine((current) => [...current, newStretch]);
+    setCustomStretch({
+      name: "",
+      area: "",
+      duration: "30",
+      note: "",
+      cue: "",
+      focus: "Mobility"
+    });
+    setShowEditor(false);
+  };
+
+  const removeStretch = (indexToRemove: number) => {
+    if (routine.length <= 1) return;
+
+    setRoutine((current) => current.filter((_, index) => index !== indexToRemove));
+    setCompleted((current) => current.filter((index) => index !== indexToRemove));
+
+    if (activeIndex >= routine.length - 1) {
+      setActiveIndex(Math.max(0, routine.length - 2));
+    }
+  };
+
+  const resetToDefault = () => {
+    setRoutine(defaultRoutine);
+    setActiveIndex(0);
+    setCompleted([]);
+    setIsRunning(false);
+    setSecondsLeft(Math.round(defaultRoutine[0].duration * paceMultiplier[pace]));
+    setShowEditor(false);
+  };
+
+  if (!routine.length) {
+    return null;
+  }
 
   return (
     <main className="min-h-screen bg-[#f5f5f7] text-[#111113]">
@@ -152,7 +290,7 @@ export default function Home() {
               aria-label="Previous stretch"
               className="grid h-10 w-10 place-items-center rounded-full bg-white text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
               onClick={() => {
-                const previousIndex = activeIndex === 0 ? stretches.length - 1 : activeIndex - 1;
+                const previousIndex = activeIndex === 0 ? routine.length - 1 : activeIndex - 1;
                 handleStretchChange(previousIndex);
               }}
               type="button"
@@ -176,7 +314,7 @@ export default function Home() {
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#e5e5ea]">
             <div
               className="h-full rounded-full bg-[#34c759] transition-all duration-300"
-              style={{ width: `${Math.min(progress, 100)}%` }}
+              style={{ width: `${Math.min(progressPercent, 100)}%` }}
             />
           </div>
         </header>
@@ -253,6 +391,114 @@ export default function Home() {
           </div>
         </section>
 
+        <section className="mt-5 rounded-[24px] bg-white p-4 shadow-[0_8px_24px_rgba(0,0,0,0.04)]">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[18px] font-bold">Saved progress</h2>
+            <button
+              className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#0b57d0]"
+              onClick={() => setShowEditor((current) => !current)}
+              type="button"
+            >
+              {showEditor ? "Close" : "Customize"}
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-2xl bg-[#f2f2f7] p-3">
+              <div className="text-[11px] font-semibold uppercase text-[#6e6e73]">Sessions</div>
+              <div className="mt-1 text-[24px] font-bold">{progress.completedSessions}</div>
+            </div>
+            <div className="rounded-2xl bg-[#f2f2f7] p-3">
+              <div className="text-[11px] font-semibold uppercase text-[#6e6e73]">Minutes</div>
+              <div className="mt-1 text-[24px] font-bold">{progress.totalMinutes}</div>
+            </div>
+            <div className="rounded-2xl bg-[#f2f2f7] p-3">
+              <div className="text-[11px] font-semibold uppercase text-[#6e6e73]">Last</div>
+              <div className="mt-1 text-[12px] font-bold">
+                {progress.lastCompletedDate ? progress.lastCompletedDate.slice(5) : "-"}
+              </div>
+            </div>
+          </div>
+
+          {showEditor ? (
+            <div className="mt-4 space-y-3 rounded-2xl border border-[#e5e5ea] bg-[#fafafa] p-3">
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  className="h-11 rounded-xl border border-[#e5e5ea] bg-white px-3 text-[14px] outline-none"
+                  onChange={(event) =>
+                    setCustomStretch((current) => ({ ...current, name: event.target.value }))
+                  }
+                  placeholder="Stretch name"
+                  value={customStretch.name}
+                />
+                <input
+                  className="h-11 rounded-xl border border-[#e5e5ea] bg-white px-3 text-[14px] outline-none"
+                  onChange={(event) =>
+                    setCustomStretch((current) => ({ ...current, area: event.target.value }))
+                  }
+                  placeholder="Area"
+                  value={customStretch.area}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  className="h-11 rounded-xl border border-[#e5e5ea] bg-white px-3 text-[14px] outline-none"
+                  onChange={(event) =>
+                    setCustomStretch((current) => ({ ...current, duration: event.target.value }))
+                  }
+                  placeholder="Seconds"
+                  type="number"
+                  value={customStretch.duration}
+                />
+                <input
+                  className="h-11 rounded-xl border border-[#e5e5ea] bg-white px-3 text-[14px] outline-none"
+                  onChange={(event) =>
+                    setCustomStretch((current) => ({ ...current, focus: event.target.value }))
+                  }
+                  placeholder="Focus"
+                  value={customStretch.focus}
+                />
+              </div>
+
+              <input
+                className="h-11 w-full rounded-xl border border-[#e5e5ea] bg-white px-3 text-[14px] outline-none"
+                onChange={(event) =>
+                  setCustomStretch((current) => ({ ...current, cue: event.target.value }))
+                }
+                placeholder="Cue"
+                value={customStretch.cue}
+              />
+
+              <textarea
+                className="min-h-[80px] w-full rounded-xl border border-[#e5e5ea] bg-white px-3 py-2 text-[14px] outline-none"
+                onChange={(event) =>
+                  setCustomStretch((current) => ({ ...current, note: event.target.value }))
+                }
+                placeholder="Instructions"
+                value={customStretch.note}
+              />
+
+              <div className="flex gap-2">
+                <button
+                  className="h-11 flex-1 rounded-xl bg-[#111113] text-[14px] font-semibold text-white"
+                  onClick={addCustomStretch}
+                  type="button"
+                >
+                  Add stretch
+                </button>
+                <button
+                  className="h-11 flex-1 rounded-xl bg-[#eef3ff] text-[14px] font-semibold text-[#0b57d0]"
+                  onClick={resetToDefault}
+                  type="button"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
+
         <section className="mt-5">
           <div className="flex items-center justify-between px-1">
             <h2 className="text-[22px] font-bold">Routine</h2>
@@ -262,35 +508,45 @@ export default function Home() {
           </div>
 
           <div className="mt-3 overflow-hidden rounded-2xl bg-white">
-            {stretches.map((stretch, index) => {
+            {routine.map((stretch, index) => {
               const done = completed.includes(index);
 
               return (
-                <button
-                  className="flex min-h-20 w-full items-center gap-3 border-b border-[#f2f2f7] px-4 py-3 text-left last:border-b-0"
-                  key={stretch.name}
-                  onClick={() => handleStretchChange(index)}
-                  type="button"
-                >
-                  <span
-                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${
-                      index === activeIndex
-                        ? "bg-[#007aff] text-white"
-                        : done
-                          ? "bg-[#dff6e8] text-[#1f8f57]"
-                          : "bg-[#f2f2f7] text-[#6e6e73]"
-                    }`}
+                <div className="flex w-full items-center gap-3 border-b border-[#f2f2f7] px-4 py-3 last:border-b-0" key={`${stretch.name}-${index}`}>
+                  <button
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    onClick={() => handleStretchChange(index)}
+                    type="button"
                   >
-                    {done ? "✓" : index + 1}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <strong className="block truncate text-[17px]">{stretch.name}</strong>
-                    <span className="mt-0.5 block text-[14px] text-[#6e6e73]">{stretch.area}</span>
-                  </span>
-                  <span className="text-[15px] font-semibold text-[#8e8e93]">
-                    {Math.round(stretch.duration * paceMultiplier[pace])}s
-                  </span>
-                </button>
+                    <span
+                      className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${
+                        index === activeIndex
+                          ? "bg-[#007aff] text-white"
+                          : done
+                            ? "bg-[#dff6e8] text-[#1f8f57]"
+                            : "bg-[#f2f2f7] text-[#6e6e73]"
+                      }`}
+                    >
+                      {done ? "✓" : index + 1}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <strong className="block truncate text-[17px]">{stretch.name}</strong>
+                      <span className="mt-0.5 block text-[14px] text-[#6e6e73]">{stretch.area}</span>
+                    </span>
+                    <span className="text-[15px] font-semibold text-[#8e8e93]">
+                      {Math.round(stretch.duration * paceMultiplier[pace])}s
+                    </span>
+                  </button>
+
+                  <button
+                    aria-label={`Remove ${stretch.name}`}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f2f2f7] text-lg text-[#6e6e73]"
+                    onClick={() => removeStretch(index)}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
               );
             })}
           </div>
