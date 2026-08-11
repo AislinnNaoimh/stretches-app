@@ -747,35 +747,52 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              {planner.map((day, index) => (
-                <button
-                  className={`rounded-2xl border p-3 text-left ${
-                    selectedDayIndex === index
-                      ? theme === "dark"
-                        ? "border-[#007aff] bg-[#182235]"
-                        : "border-[#007aff] bg-[#eef3ff]"
-                      : theme === "dark"
-                        ? "border-white/10 bg-[#111827]"
-                        : "border-[#e5e5ea] bg-white"
-                  }`}
-                  key={day.day}
-                  onClick={() => setSelectedDayIndex(index)}
-                  type="button"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[14px] font-bold">{day.day}</span>
-                    <span className="text-[11px] font-semibold uppercase text-[#0b57d0]">
-                      {day.tasks.filter((task) => task.done).length}/{day.tasks.length}
-                    </span>
-                  </div>
-                  <div className={`mt-2 text-[12px] font-semibold ${mutedText}`}>{day.focus}</div>
-                </button>
-              ))}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {planner.map((day, index) => {
+                const completedCount = day.tasks.filter((task) => task.done).length;
+                const progressPercentForDay = (completedCount / day.tasks.length) * 100;
+                const isSelected = selectedDayIndex === index;
+
+                return (
+                  <button
+                    className={`rounded-2xl border p-3 text-left transition ${
+                      isSelected
+                        ? theme === "dark"
+                          ? "border-[#007aff] bg-[#182235] shadow-[0_0_0_1px_rgba(0,122,255,0.3)]"
+                          : "border-[#007aff] bg-[#eef3ff]"
+                        : theme === "dark"
+                          ? "border-white/10 bg-[#111827]"
+                          : "border-[#e5e5ea] bg-white"
+                    }`}
+                    key={day.day}
+                    onClick={() => setSelectedDayIndex(index)}
+                    type="button"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Day</div>
+                        <div className="mt-1 text-[18px] font-bold">{day.day}</div>
+                      </div>
+                      <span className="rounded-full bg-[#007aff]/10 px-2 py-1 text-[10px] font-bold uppercase text-[#0b57d0]">
+                        {completedCount}/{day.tasks.length}
+                      </span>
+                    </div>
+
+                    <div className={`mt-3 text-[12px] font-semibold ${mutedText}`}>{day.focus}</div>
+
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#e5e5ea]">
+                      <div
+                        className="h-full rounded-full bg-[#34c759]"
+                        style={{ width: `${Math.min(progressPercentForDay, 100)}%` }}
+                      />
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Selected day</div>
                   <h3 className="text-[22px] font-bold">{selectedDay.day}</h3>
