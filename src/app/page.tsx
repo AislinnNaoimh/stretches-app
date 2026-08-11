@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type Pace = "calm" | "steady" | "deep";
 type ThemeMode = "light" | "dark";
-type ViewMode = "today" | "plans" | "stats";
+type ViewMode = "today" | "plans" | "stats" | "settings";
 
 type Stretch = {
   name: string;
@@ -32,9 +32,17 @@ type ProgressState = {
   completedSessions: number;
   totalMinutes: number;
   lastCompletedDate: string | null;
+  currentStreak: number;
+  bestStreak: number;
+  completedDates: string[];
 };
 
-const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+type SettingsState = {
+  dailyGoalMinutes: number;
+  reminderTime: string;
+  soundEnabled: boolean;
+  defaultPace: Pace;
+};
 
 const defaultRoutine: Stretch[] = [
   {
@@ -135,6 +143,49 @@ const routineStorageKey = "stretch-routine-v1";
 const progressStorageKey = "stretch-progress-v1";
 const plannerStorageKey = "stretch-planner-v1";
 const themeStorageKey = "stretch-theme-v1";
+const settingsStorageKey = "stretch-settings-v1";
+
+const defaultProgress: ProgressState = {
+  completedSessions: 0,
+  totalMinutes: 0,
+  lastCompletedDate: null,
+  currentStreak: 0,
+  bestStreak: 0,
+  completedDates: []
+};
+
+const defaultSettings: SettingsState = {
+  dailyGoalMinutes: 8,
+  reminderTime: "18:30",
+  soundEnabled: true,
+  defaultPace: "steady"
+};
+
+function getTodayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getPreviousDateKey(dateKey: string) {
+  const date = new Date(`${dateKey}T00:00:00`);
+  date.setDate(date.getDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function getRecentDateKeys(count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - index);
+    return date.toISOString().slice(0, 10);
+  }).reverse();
+}
+
+function normalizeProgress(progress: Partial<ProgressState>): ProgressState {
+  return {
+    ...defaultProgress,
+    ...progress,
+    completedDates: Array.isArray(progress.completedDates) ? progress.completedDates : []
+  };
+}
 
 function loadSavedRoutine(): Stretch[] {
   if (typeof window === "undefined") return defaultRoutine;
@@ -151,19 +202,15 @@ function loadSavedRoutine(): Stretch[] {
 }
 
 function loadSavedProgress(): ProgressState {
-  if (typeof window === "undefined") {
-    return { completedSessions: 0, totalMinutes: 0, lastCompletedDate: null };
-  }
+  if (typeof window === "undefined") return defaultProgress;
 
   const saved = window.localStorage.getItem(progressStorageKey);
-  if (!saved) {
-    return { completedSessions: 0, totalMinutes: 0, lastCompletedDate: null };
-  }
+  if (!saved) return defaultProgress;
 
   try {
-    return JSON.parse(saved) as ProgressState;
+    return normalizeProgress(JSON.parse(saved) as Partial<ProgressState>);
   } catch {
-    return { completedSessions: 0, totalMinutes: 0, lastCompletedDate: null };
+    return defaultProgress;
   }
 }
 
@@ -181,8 +228,21 @@ function loadSavedPlanner(): DailyPlan[] {
   }
 }
 
-function playAlert() {
-  if (typeof window === "undefined") return;
+function loadSavedSettings(): SettingsState {
+  if (typeof window === "undefined") return defaultSettings;
+
+  const saved = window.localStorage.getItem(settingsStorageKey);
+  if (!saved) return defaultSettings;
+
+  try {
+    return { ...defaultSettings, ...(JSON.parse(saved) as Partial<SettingsState>) };
+  } catch {
+    return defaultSettings;
+  }
+}
+
+function playAlert(soundEnabled: boolean) {
+  if (typeof window === "undefined" || !soundEnabled) return;
 
   try {
     const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -210,19 +270,17 @@ function playAlert() {
 export default function Home() {
   const [view, setView] = useState<ViewMode>("today");
   const [theme, setTheme] = useState<ThemeMode>("light");
-  const [routine, setRoutine] = useState<Stretch[]>([]);
-  const [planner, setPlanner] = useState<DailyPlan[]>([]);
+  const [routine, setRoutine] = useState<Stretch[]>(defaultRoutine);
+  const [planner, setPlanner] = useState<DailyPlan[]>(defaultPlanner);
   const [activeIndex, setActiveIndex] = useState(0);
   const [pace, setPace] = useState<Pace>("steady");
   const [isRunning, setIsRunning] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [secondsLeft, setSecondsLeft] = useState(defaultRoutine[0].duration);
   const [completed, setCompleted] = useState<number[]>([]);
   const [showEditor, setShowEditor] = useState(false);
-  const [progress, setProgress] = useState<ProgressState>({
-    completedSessions: 0,
-    totalMinutes: 0,
-    lastCompletedDate: null
-  });
+  const [hasHydrated, setHasHydrated] = useState(false);
+  const [progress, setProgress] = useState<ProgressState>(defaultProgress);
+  const [settings, setSettings] = useState<SettingsState>(defaultSettings);
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const [customStretch, setCustomStretch] = useState({
     name: "",
@@ -234,39 +292,58 @@ export default function Home() {
   });
 
   useEffect(() => {
-    setRoutine(loadSavedRoutine());
-    setPlanner(loadSavedPlanner());
-    setProgress(loadSavedProgress());
+    window.requestAnimationFrame(() => {
+      const savedSettings = loadSavedSettings();
+      const savedRoutine = loadSavedRoutine();
+      const storedTheme = window.localStorage.getItem(themeStorageKey);
 
-    const storedTheme = window.localStorage.getItem(themeStorageKey);
-    if (storedTheme === "dark" || storedTheme === "light") {
-      setTheme(storedTheme);
-    }
+      setSettings(savedSettings);
+      setPace(savedSettings.defaultPace);
+      setRoutine(savedRoutine);
+      setPlanner(loadSavedPlanner());
+      setProgress(loadSavedProgress());
+      setSecondsLeft(Math.round(savedRoutine[0].duration * paceMultiplier[savedSettings.defaultPace]));
+
+      if (storedTheme === "dark" || storedTheme === "light") {
+        setTheme(storedTheme);
+      }
+
+      setHasHydrated(true);
+    });
   }, []);
 
   useEffect(() => {
+    if (!hasHydrated) return;
     document.documentElement.style.colorScheme = theme;
     window.localStorage.setItem(themeStorageKey, theme);
-  }, [theme]);
+  }, [hasHydrated, theme]);
 
   useEffect(() => {
-    if (routine.length === 0) return;
+    if (!hasHydrated || routine.length === 0) return;
     window.localStorage.setItem(routineStorageKey, JSON.stringify(routine));
-  }, [routine]);
+  }, [hasHydrated, routine]);
 
   useEffect(() => {
-    if (planner.length === 0) return;
+    if (!hasHydrated || planner.length === 0) return;
     window.localStorage.setItem(plannerStorageKey, JSON.stringify(planner));
-  }, [planner]);
+  }, [hasHydrated, planner]);
 
   useEffect(() => {
+    if (!hasHydrated) return;
     window.localStorage.setItem(progressStorageKey, JSON.stringify(progress));
-  }, [progress]);
+  }, [hasHydrated, progress]);
+
+  useEffect(() => {
+    if (!hasHydrated) return;
+    window.localStorage.setItem(settingsStorageKey, JSON.stringify(settings));
+  }, [hasHydrated, settings]);
 
   useEffect(() => {
     if (!routine.length) return;
-    setSecondsLeft(Math.round(routine[activeIndex].duration * paceMultiplier[pace]));
-    setIsRunning(false);
+    window.requestAnimationFrame(() => {
+      setSecondsLeft(Math.round(routine[activeIndex].duration * paceMultiplier[pace]));
+      setIsRunning(false);
+    });
   }, [activeIndex, pace, routine]);
 
   useEffect(() => {
@@ -275,7 +352,7 @@ export default function Home() {
     const timer = window.setInterval(() => {
       setSecondsLeft((current) => {
         if (current <= 1) {
-          playAlert();
+          playAlert(settings.soundEnabled);
           setCompleted((existing) =>
             existing.includes(activeIndex) ? existing : [...existing, activeIndex]
           );
@@ -294,7 +371,7 @@ export default function Home() {
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [activeIndex, isRunning, routine]);
+  }, [activeIndex, isRunning, routine, settings.soundEnabled]);
 
   const activeStretch = routine[activeIndex] ?? routine[0];
   const adjustedDuration = activeStretch ? Math.round(activeStretch.duration * paceMultiplier[pace]) : 0;
@@ -311,19 +388,42 @@ export default function Home() {
   );
   const weeklyProgressPct = totalWeeklyTasks ? (completedWeeklyTasks / totalWeeklyTasks) * 100 : 0;
   const selectedDay = planner[selectedDayIndex] ?? planner[0];
+  const todayMinutes = progress.lastCompletedDate === getTodayKey() ? Math.round(routineLength / 60) : 0;
+  const dailyGoalProgress = settings.dailyGoalMinutes
+    ? Math.min((todayMinutes / settings.dailyGoalMinutes) * 100, 100)
+    : 0;
+  const recentDates = getRecentDateKeys(7);
 
   useEffect(() => {
     if (!sessionComplete) return;
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getTodayKey();
     const totalRoutineMinutes = Math.round(routineLength / 60);
 
-    setProgress((current) => ({
-      completedSessions: current.completedSessions + 1,
-      totalMinutes: current.totalMinutes + totalRoutineMinutes,
-      lastCompletedDate: today
-    }));
-    setCompleted([]);
+    window.requestAnimationFrame(() => {
+      setProgress((current) => {
+        const completedDates = current.completedDates.includes(today)
+          ? current.completedDates
+          : [...current.completedDates, today];
+        const continuedStreak = current.lastCompletedDate === getPreviousDateKey(today);
+        const alreadyCompletedToday = current.lastCompletedDate === today;
+        const nextStreak = alreadyCompletedToday
+          ? current.currentStreak
+          : continuedStreak
+            ? current.currentStreak + 1
+            : 1;
+
+        return {
+          completedSessions: current.completedSessions + 1,
+          totalMinutes: current.totalMinutes + totalRoutineMinutes,
+          lastCompletedDate: today,
+          currentStreak: nextStreak,
+          bestStreak: Math.max(current.bestStreak, nextStreak),
+          completedDates
+        };
+      });
+      setCompleted([]);
+    });
   }, [sessionComplete, routineLength]);
 
   const handleStretchChange = (nextIndex: number) => {
@@ -561,7 +661,7 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div className="mt-3 grid grid-cols-4 gap-2 text-center">
                 <div className={`rounded-2xl ${softPanelClass} p-3`}>
                   <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Sessions</div>
                   <div className="mt-1 text-[24px] font-bold">{progress.completedSessions}</div>
@@ -575,6 +675,10 @@ export default function Home() {
                   <div className="mt-1 text-[12px] font-bold">
                     {progress.lastCompletedDate ? progress.lastCompletedDate.slice(5) : "-"}
                   </div>
+                </div>
+                <div className={`rounded-2xl ${softPanelClass} p-3`}>
+                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Streak</div>
+                  <div className="mt-1 text-[24px] font-bold">{progress.currentStreak}</div>
                 </div>
               </div>
 
@@ -850,6 +954,60 @@ export default function Home() {
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
               <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Current streak</div>
+                  <div className="text-[30px] font-bold">{progress.currentStreak} days</div>
+                </div>
+                <div className="rounded-full bg-[#34c759]/15 px-3 py-1 text-[12px] font-bold text-[#166c42]">
+                  Best {progress.bestStreak}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-7 gap-2">
+                {recentDates.map((dateKey) => {
+                  const isDone = progress.completedDates.includes(dateKey);
+                  const day = new Date(`${dateKey}T00:00:00`).toLocaleDateString("en", {
+                    weekday: "short"
+                  }).slice(0, 1);
+
+                  return (
+                    <div className="text-center" key={dateKey}>
+                      <div className={`mx-auto grid h-9 w-9 place-items-center rounded-full text-[13px] font-bold ${
+                        isDone
+                          ? "bg-[#34c759] text-white"
+                          : theme === "dark"
+                            ? "bg-[#182235] text-[#c5d2ec]"
+                            : "bg-[#f2f2f7] text-[#8e8e93]"
+                      }`}>
+                        {isDone ? "✓" : day}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Daily goal</div>
+                  <div className="text-[26px] font-bold">{settings.dailyGoalMinutes} min</div>
+                </div>
+                <div className="text-[12px] font-semibold text-[#0b57d0]">
+                  {Math.round(dailyGoalProgress)}%
+                </div>
+              </div>
+
+              <div className="h-2 overflow-hidden rounded-full bg-[#e5e5ea]">
+                <div
+                  className="h-full rounded-full bg-[#007aff]"
+                  style={{ width: `${dailyGoalProgress}%` }}
+                />
+              </div>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-[20px] font-bold">Weekly totals</h3>
                 <span className={`text-[12px] font-semibold ${mutedText}`}>Saved</span>
               </div>
@@ -894,8 +1052,131 @@ export default function Home() {
           </section>
         ) : null}
 
+        {view === "settings" ? (
+          <section className="mt-5 space-y-4">
+            <div>
+              <p className={`text-[12px] font-semibold uppercase ${mutedText}`}>Preferences</p>
+              <h2 className="text-[30px] font-bold">Settings</h2>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Daily goal</div>
+                  <div className="mt-1 text-[24px] font-bold">{settings.dailyGoalMinutes} min</div>
+                </div>
+                <input
+                  aria-label="Daily goal minutes"
+                  className={`h-11 w-24 rounded-xl border px-3 text-right text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                  min={1}
+                  max={90}
+                  onChange={(event) =>
+                    setSettings((current) => ({
+                      ...current,
+                      dailyGoalMinutes: Math.max(1, Number(event.target.value) || 1)
+                    }))
+                  }
+                  type="number"
+                  value={settings.dailyGoalMinutes}
+                />
+              </div>
+
+              <input
+                aria-label="Daily goal slider"
+                className="mt-4 w-full accent-[#007aff]"
+                max={30}
+                min={1}
+                onChange={(event) =>
+                  setSettings((current) => ({
+                    ...current,
+                    dailyGoalMinutes: Number(event.target.value)
+                  }))
+                }
+                type="range"
+                value={Math.min(settings.dailyGoalMinutes, 30)}
+              />
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Reminder</div>
+                  <div className="mt-1 text-[22px] font-bold">{settings.reminderTime}</div>
+                </div>
+                <input
+                  aria-label="Reminder time"
+                  className={`h-11 rounded-xl border px-3 text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                  onChange={(event) =>
+                    setSettings((current) => ({ ...current, reminderTime: event.target.value }))
+                  }
+                  type="time"
+                  value={settings.reminderTime}
+                />
+              </div>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-[20px] font-bold">Default pace</h3>
+                <span className={`text-[12px] font-semibold capitalize ${mutedText}`}>{settings.defaultPace}</span>
+              </div>
+
+              <div className="grid grid-cols-3 rounded-xl bg-[#e5e5ea] p-1">
+                {(["calm", "steady", "deep"] as const).map((mode) => (
+                  <button
+                    className={`h-9 rounded-lg text-[13px] font-semibold capitalize transition ${
+                      settings.defaultPace === mode
+                        ? theme === "dark"
+                          ? "bg-[#182235] text-white shadow-sm"
+                          : "bg-white text-[#111113] shadow-sm"
+                        : "text-[#6e6e73]"
+                    }`}
+                    key={mode}
+                    onClick={() => {
+                      setSettings((current) => ({ ...current, defaultPace: mode }));
+                      setPace(mode);
+                    }}
+                    type="button"
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <label className="flex cursor-pointer items-center justify-between gap-4">
+                <span>
+                  <span className="block text-[20px] font-bold">Timer sound</span>
+                  <span className={`mt-1 block text-[14px] ${mutedText}`}>Play a soft tone after each hold.</span>
+                </span>
+                <input
+                  checked={settings.soundEnabled}
+                  className="h-6 w-6 accent-[#007aff]"
+                  onChange={(event) =>
+                    setSettings((current) => ({ ...current, soundEnabled: event.target.checked }))
+                  }
+                  type="checkbox"
+                />
+              </label>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <h3 className="text-[20px] font-bold">Progress reset</h3>
+              <p className={`mt-1 text-[14px] ${mutedText}`}>Clear sessions, minutes, streaks, and completed dates.</p>
+              <button
+                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
+                onClick={() => setProgress(defaultProgress)}
+                type="button"
+              >
+                Reset progress
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         <nav className={`fixed inset-x-0 bottom-0 z-20 border-t px-6 pb-[calc(10px+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl ${navClass}`}>
-          <div className="mx-auto grid max-w-md grid-cols-3">
+          <div className="mx-auto grid max-w-md grid-cols-4">
             <button
               className={`ios-tab ${view === "today" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
               onClick={() => setView("today")}
@@ -919,6 +1200,14 @@ export default function Home() {
             >
               <span>◌</span>
               <span>Stats</span>
+            </button>
+            <button
+              className={`ios-tab ${view === "settings" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
+              onClick={() => setView("settings")}
+              type="button"
+            >
+              <span>⚙</span>
+              <span>Settings</span>
             </button>
           </div>
         </nav>
