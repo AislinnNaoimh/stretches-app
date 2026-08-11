@@ -9,7 +9,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "next": "latest",
+    "next": "^16.2.11",
     "react": "latest",
     "react-dom": "latest"
   },
@@ -19,7 +19,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "eslint": "latest",
-    "eslint-config-next": "latest",
+    "eslint-config-next": "^16.2.11",
     "tailwindcss": "latest",
     "typescript": "latest"
   }

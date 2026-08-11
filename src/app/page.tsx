@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+type Pace = "calm" | "steady" | "deep";
 
 type Stretch = {
   name: string;
@@ -8,6 +10,7 @@ type Stretch = {
   duration: number;
   note: string;
   cue: string;
+  focus: string;
 };
 
 const stretches: Stretch[] = [
@@ -16,41 +19,129 @@ const stretches: Stretch[] = [
     area: "Upper body",
     duration: 45,
     note: "Drop one ear toward your shoulder and breathe into the side of the neck.",
-    cue: "Keep the jaw loose"
+    cue: "Keep the jaw loose",
+    focus: "Tension"
   },
   {
     name: "Chest opener",
     area: "Posture",
     duration: 60,
     note: "Interlace fingers behind your back, lift the chest, and keep the ribs soft.",
-    cue: "Breathe into the ribs"
+    cue: "Breathe into the ribs",
+    focus: "Breath"
   },
   {
     name: "Hip flexor lunge",
     area: "Hips",
     duration: 75,
     note: "Tuck the pelvis gently and shift forward until the front of the hip opens.",
-    cue: "Glute on, ribs down"
+    cue: "Glute on, ribs down",
+    focus: "Mobility"
   },
   {
     name: "Hamstring fold",
     area: "Legs",
     duration: 60,
     note: "Hinge from the hips with a long spine and keep a small bend in the knee.",
-    cue: "Reach through the heel"
+    cue: "Reach through the heel",
+    focus: "Length"
+  },
+  {
+    name: "Figure-four stretch",
+    area: "Glutes",
+    duration: 60,
+    note: "Cross the ankle over the opposite knee and sit back to open the outer hip.",
+    cue: "Keep the chest lifted",
+    focus: "Release"
+  },
+  {
+    name: "Calf pump",
+    area: "Lower legs",
+    duration: 40,
+    note: "Press the heel down and gently bend the knee to wake up the calf and ankle.",
+    cue: "Drive the heel into the floor",
+    focus: "Stability"
   }
 ];
 
+const paceMultiplier: Record<Pace, number> = {
+  calm: 0.85,
+  steady: 1,
+  deep: 1.2
+};
+
 export default function Home() {
   const [activeIndex, setActiveIndex] = useState(0);
-  const [pace, setPace] = useState<"calm" | "steady" | "deep">("steady");
-  const activeStretch = stretches[activeIndex];
+  const [pace, setPace] = useState<Pace>("steady");
+  const [isRunning, setIsRunning] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(stretches[0].duration);
+  const [completed, setCompleted] = useState<number[]>([]);
 
+  const activeStretch = stretches[activeIndex];
+  const adjustedDuration = Math.round(activeStretch.duration * paceMultiplier[pace]);
   const routineLength = useMemo(
     () => stretches.reduce((total, stretch) => total + stretch.duration, 0),
     []
   );
   const progress = ((activeIndex + 1) / stretches.length) * 100;
+  const sessionComplete = completed.length >= stretches.length;
+
+  useEffect(() => {
+    setSecondsLeft(adjustedDuration);
+    if (isRunning) {
+      setIsRunning(false);
+    }
+  }, [activeIndex, pace]);
+
+  useEffect(() => {
+    if (!isRunning) return;
+
+    const timer = window.setInterval(() => {
+      setSecondsLeft((current) => {
+        if (current <= 1) {
+          setCompleted((existing) =>
+            existing.includes(activeIndex) ? existing : [...existing, activeIndex]
+          );
+
+          if (activeIndex === stretches.length - 1) {
+            setIsRunning(false);
+            return 0;
+          }
+
+          setActiveIndex((nextIndex) => nextIndex + 1);
+          return 0;
+        }
+
+        return current - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [activeIndex, isRunning]);
+
+  const handleStretchChange = (nextIndex: number) => {
+    setActiveIndex(nextIndex);
+    setIsRunning(false);
+    setSecondsLeft(Math.round(stretches[nextIndex].duration * paceMultiplier[pace]));
+  };
+
+  const handleNext = () => {
+    if (activeIndex === stretches.length - 1) {
+      setActiveIndex(0);
+      setSecondsLeft(Math.round(stretches[0].duration * paceMultiplier[pace]));
+      setIsRunning(false);
+      return;
+    }
+
+    handleStretchChange(activeIndex + 1);
+  };
+
+  const handleReset = () => {
+    setActiveIndex(0);
+    setCompleted([]);
+    setIsRunning(false);
+    setSecondsLeft(Math.round(stretches[0].duration * paceMultiplier[pace]));
+  };
 
   return (
     <main className="min-h-screen bg-[#f5f5f7] text-[#111113]">
@@ -60,9 +151,10 @@ export default function Home() {
             <button
               aria-label="Previous stretch"
               className="grid h-10 w-10 place-items-center rounded-full bg-white text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
-              onClick={() =>
-                setActiveIndex((current) => (current === 0 ? stretches.length - 1 : current - 1))
-              }
+              onClick={() => {
+                const previousIndex = activeIndex === 0 ? stretches.length - 1 : activeIndex - 1;
+                handleStretchChange(previousIndex);
+              }}
               type="button"
             >
               ‹
@@ -74,18 +166,17 @@ export default function Home() {
             <button
               aria-label="Next stretch"
               className="grid h-10 w-10 place-items-center rounded-full bg-[#007aff] text-2xl font-medium text-white shadow-[0_6px_14px_rgba(0,122,255,0.28)]"
-              onClick={() =>
-                setActiveIndex((current) => (current === stretches.length - 1 ? 0 : current + 1))
-              }
+              onClick={handleNext}
               type="button"
             >
               ›
             </button>
           </div>
+
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#e5e5ea]">
             <div
               className="h-full rounded-full bg-[#34c759] transition-all duration-300"
-              style={{ width: `${progress}%` }}
+              style={{ width: `${Math.min(progress, 100)}%` }}
             />
           </div>
         </header>
@@ -114,17 +205,25 @@ export default function Home() {
               </h2>
             </div>
             <div className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-[#f2f2f7] text-center">
-              <span className="text-2xl font-bold">{activeStretch.duration}</span>
+              <span className="text-2xl font-bold">{Math.max(1, adjustedDuration)}</span>
               <span className="-mt-3 text-[11px] font-semibold text-[#6e6e73]">sec</span>
             </div>
           </div>
 
-          <div className="mt-6 aspect-[4/3] rounded-[24px] bg-[radial-gradient(circle_at_35%_28%,#ffffff_0,#ffffff_12%,transparent_13%),linear-gradient(145deg,#d7f7df,#b5d8ff_55%,#f8d0d9)] p-4">
-            <div className="flex h-full flex-col justify-between rounded-[20px] bg-white/35 p-4 backdrop-blur-sm">
-              <div className="h-12 w-12 rounded-full bg-white/70 shadow-inner" />
+          <div className="mt-6 rounded-[24px] bg-[radial-gradient(circle_at_35%_28%,#ffffff_0,#ffffff_12%,transparent_13%),linear-gradient(145deg,#d7f7df,#b5d8ff_55%,#f8d0d9)] p-4">
+            <div className="flex h-full min-h-[170px] flex-col justify-between rounded-[20px] bg-white/35 p-4 backdrop-blur-sm">
+              <div className="flex items-center justify-between">
+                <div className="h-12 w-12 rounded-full bg-white/70 shadow-inner" />
+                <div className="rounded-full bg-white/70 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-[#111113]">
+                  {activeStretch.focus}
+                </div>
+              </div>
+
               <div className="space-y-2">
-                <div className="h-4 w-28 rounded-full bg-white/75" />
-                <div className="h-4 w-40 rounded-full bg-white/55" />
+                <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#6e6e73]">
+                  Timer
+                </div>
+                <div className="text-5xl font-bold tabular-nums text-[#111113]">{secondsLeft}s</div>
               </div>
             </div>
           </div>
@@ -136,15 +235,22 @@ export default function Home() {
             <p className="mt-1 text-[17px] font-semibold">{activeStretch.cue}</p>
           </div>
 
-          <button
-            className="mt-5 h-14 w-full rounded-2xl bg-[#111113] text-[17px] font-semibold text-white shadow-[0_10px_20px_rgba(17,17,19,0.16)]"
-            onClick={() =>
-              setActiveIndex((current) => (current === stretches.length - 1 ? 0 : current + 1))
-            }
-            type="button"
-          >
-            Start Hold
-          </button>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button
+              className="h-14 rounded-2xl bg-[#111113] text-[17px] font-semibold text-white shadow-[0_10px_20px_rgba(17,17,19,0.16)]"
+              onClick={() => setIsRunning((current) => !current)}
+              type="button"
+            >
+              {isRunning ? "Pause" : "Start hold"}
+            </button>
+            <button
+              className="h-14 rounded-2xl bg-[#eef3ff] text-[17px] font-semibold text-[#0b57d0]"
+              onClick={handleNext}
+              type="button"
+            >
+              Skip
+            </button>
+          </div>
         </section>
 
         <section className="mt-5">
@@ -154,30 +260,55 @@ export default function Home() {
               {Math.round(routineLength / 60)} min
             </span>
           </div>
+
           <div className="mt-3 overflow-hidden rounded-2xl bg-white">
-            {stretches.map((stretch, index) => (
-              <button
-                className="flex min-h-20 w-full items-center gap-3 border-b border-[#f2f2f7] px-4 py-3 text-left last:border-b-0"
-                key={stretch.name}
-                onClick={() => setActiveIndex(index)}
-                type="button"
-              >
-                <span
-                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${
-                    index === activeIndex ? "bg-[#007aff] text-white" : "bg-[#f2f2f7] text-[#6e6e73]"
-                  }`}
+            {stretches.map((stretch, index) => {
+              const done = completed.includes(index);
+
+              return (
+                <button
+                  className="flex min-h-20 w-full items-center gap-3 border-b border-[#f2f2f7] px-4 py-3 text-left last:border-b-0"
+                  key={stretch.name}
+                  onClick={() => handleStretchChange(index)}
+                  type="button"
                 >
-                  {index + 1}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <strong className="block truncate text-[17px]">{stretch.name}</strong>
-                  <span className="mt-0.5 block text-[14px] text-[#6e6e73]">{stretch.area}</span>
-                </span>
-                <span className="text-[15px] font-semibold text-[#8e8e93]">{stretch.duration}s</span>
-              </button>
-            ))}
+                  <span
+                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${
+                      index === activeIndex
+                        ? "bg-[#007aff] text-white"
+                        : done
+                          ? "bg-[#dff6e8] text-[#1f8f57]"
+                          : "bg-[#f2f2f7] text-[#6e6e73]"
+                    }`}
+                  >
+                    {done ? "✓" : index + 1}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <strong className="block truncate text-[17px]">{stretch.name}</strong>
+                    <span className="mt-0.5 block text-[14px] text-[#6e6e73]">{stretch.area}</span>
+                  </span>
+                  <span className="text-[15px] font-semibold text-[#8e8e93]">
+                    {Math.round(stretch.duration * paceMultiplier[pace])}s
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </section>
+
+        {sessionComplete ? (
+          <div className="mt-5 rounded-[24px] bg-[#eafaf2] p-4 text-[#166c42] shadow-sm">
+            <div className="text-[12px] font-bold uppercase tracking-[0.18em]">Session complete</div>
+            <div className="mt-2 text-[22px] font-bold">Nice work — you finished your routine.</div>
+            <button
+              className="mt-4 h-12 rounded-xl bg-[#166c42] px-4 text-[15px] font-semibold text-white"
+              onClick={handleReset}
+              type="button"
+            >
+              Reset routine
+            </button>
+          </div>
+        ) : null}
 
         <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-black/10 bg-white/85 px-6 pb-[calc(10px+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl">
           <div className="mx-auto grid max-w-md grid-cols-3">
