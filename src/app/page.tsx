@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Pace = "calm" | "steady" | "deep";
 type ThemeMode = "light" | "dark";
@@ -35,6 +35,16 @@ type ProgressState = {
   currentStreak: number;
   bestStreak: number;
   completedDates: string[];
+  stretchStats: Record<string, StretchTiming>;
+};
+
+type StretchTiming = {
+  sessions: number;
+  totalSeconds: number;
+  lastSeconds: number | null;
+  lastCompletedDate: string | null;
+  todaySeconds: number | null;
+  todayDate: string | null;
 };
 
 type SettingsState = {
@@ -151,7 +161,8 @@ const defaultProgress: ProgressState = {
   lastCompletedDate: null,
   currentStreak: 0,
   bestStreak: 0,
-  completedDates: []
+  completedDates: [],
+  stretchStats: {}
 };
 
 const defaultSettings: SettingsState = {
@@ -183,7 +194,10 @@ function normalizeProgress(progress: Partial<ProgressState>): ProgressState {
   return {
     ...defaultProgress,
     ...progress,
-    completedDates: Array.isArray(progress.completedDates) ? progress.completedDates : []
+    completedDates: Array.isArray(progress.completedDates) ? progress.completedDates : [],
+    stretchStats: progress.stretchStats && typeof progress.stretchStats === "object"
+      ? progress.stretchStats
+      : {}
   };
 }
 
@@ -193,6 +207,21 @@ function formatTime(totalSeconds: number) {
   const seconds = safeSeconds % 60;
 
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function getStretchKey(stretch: Stretch) {
+  return `${stretch.name}-${stretch.area}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function emptyStretchTiming(): StretchTiming {
+  return {
+    sessions: 0,
+    totalSeconds: 0,
+    lastSeconds: null,
+    lastCompletedDate: null,
+    todaySeconds: null,
+    todayDate: null
+  };
 }
 
 function loadSavedRoutine(): Stretch[] {
@@ -299,6 +328,31 @@ export default function Home() {
     cue: "",
     focus: "Mobility"
   });
+  const recordStretchCompletion = useCallback((stretch: Stretch, elapsedSeconds: number) => {
+    const stretchKey = getStretchKey(stretch);
+    const today = getTodayKey();
+    const roundedSeconds = Math.max(0, Math.round(elapsedSeconds));
+
+    setProgress((current) => {
+      const currentTiming = current.stretchStats[stretchKey] ?? emptyStretchTiming();
+      const nextSessions = currentTiming.sessions + 1;
+
+      return {
+        ...current,
+        stretchStats: {
+          ...current.stretchStats,
+          [stretchKey]: {
+            sessions: nextSessions,
+            totalSeconds: currentTiming.totalSeconds + roundedSeconds,
+            lastSeconds: roundedSeconds,
+            lastCompletedDate: today,
+            todaySeconds: roundedSeconds,
+            todayDate: today
+          }
+        }
+      };
+    });
+  }, []);
 
   useEffect(() => {
     window.requestAnimationFrame(() => {
@@ -362,6 +416,10 @@ export default function Home() {
       setSecondsLeft((current) => {
         if (current <= 1) {
           playAlert(settings.soundEnabled);
+          recordStretchCompletion(
+            routine[activeIndex],
+            routine[activeIndex].duration * paceMultiplier[pace]
+          );
           setCompleted((existing) =>
             existing.includes(activeIndex) ? existing : [...existing, activeIndex]
           );
@@ -380,10 +438,19 @@ export default function Home() {
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [activeIndex, isRunning, routine, settings.soundEnabled]);
+  }, [activeIndex, isRunning, pace, recordStretchCompletion, routine, settings.soundEnabled]);
 
   const activeStretch = routine[activeIndex] ?? routine[0];
   const adjustedDuration = activeStretch ? Math.round(activeStretch.duration * paceMultiplier[pace]) : 0;
+  const activeStretchTiming = activeStretch
+    ? progress.stretchStats[getStretchKey(activeStretch)] ?? emptyStretchTiming()
+    : emptyStretchTiming();
+  const activeStretchTime = activeStretchTiming.todayDate === getTodayKey()
+    ? activeStretchTiming.todaySeconds
+    : null;
+  const activeStretchAverage = activeStretchTiming.sessions > 0
+    ? Math.round(activeStretchTiming.totalSeconds / activeStretchTiming.sessions)
+    : null;
   const routineLength = useMemo(
     () => routine.reduce((total, stretch) => total + stretch.duration, 0),
     [routine]
@@ -423,6 +490,7 @@ export default function Home() {
             : 1;
 
         return {
+          ...current,
           completedSessions: current.completedSessions + 1,
           totalMinutes: current.totalMinutes + totalRoutineMinutes,
           lastCompletedDate: today,
@@ -462,6 +530,10 @@ export default function Home() {
 
   const handleCompleteCurrent = () => {
     if (!routine.length) return;
+
+    if (!completed.includes(activeIndex)) {
+      recordStretchCompletion(activeStretch, adjustedDuration - secondsLeft);
+    }
 
     setCompleted((existing) =>
       existing.includes(activeIndex) ? existing : [...existing, activeIndex]
@@ -733,21 +805,25 @@ export default function Home() {
               <div className="mt-3 grid grid-cols-4 gap-2 text-center">
                 <div className={`rounded-2xl ${softPanelClass} p-3`}>
                   <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Sessions</div>
-                  <div className="mt-1 text-[24px] font-bold">{progress.completedSessions}</div>
+                  <div className="mt-1 text-[24px] font-bold">{activeStretchTiming.sessions}</div>
                 </div>
                 <div className={`rounded-2xl ${softPanelClass} p-3`}>
-                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Minutes</div>
-                  <div className="mt-1 text-[24px] font-bold">{progress.totalMinutes}</div>
-                </div>
-                <div className={`rounded-2xl ${softPanelClass} p-3`}>
-                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Last</div>
-                  <div className="mt-1 text-[12px] font-bold">
-                    {progress.lastCompletedDate ? progress.lastCompletedDate.slice(5) : "-"}
+                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Time</div>
+                  <div className="mt-1 text-[14px] font-bold tabular-nums">
+                    {activeStretchTime === null ? "N/A" : formatTime(activeStretchTime)}
                   </div>
                 </div>
                 <div className={`rounded-2xl ${softPanelClass} p-3`}>
-                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Streak</div>
-                  <div className="mt-1 text-[24px] font-bold">{progress.currentStreak}</div>
+                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Last</div>
+                  <div className="mt-1 text-[14px] font-bold tabular-nums">
+                    {activeStretchTiming.lastSeconds === null ? "N/A" : formatTime(activeStretchTiming.lastSeconds)}
+                  </div>
+                </div>
+                <div className={`rounded-2xl ${softPanelClass} p-3`}>
+                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Avg.</div>
+                  <div className="mt-1 text-[14px] font-bold tabular-nums">
+                    {activeStretchAverage === null ? "N/A" : formatTime(activeStretchAverage)}
+                  </div>
                 </div>
               </div>
 
