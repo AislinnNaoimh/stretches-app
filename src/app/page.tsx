@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Pace = "calm" | "steady" | "deep";
 type ThemeMode = "light" | "dark";
@@ -187,6 +187,14 @@ function normalizeProgress(progress: Partial<ProgressState>): ProgressState {
   };
 }
 
+function formatTime(totalSeconds: number) {
+  const safeSeconds = Math.max(0, totalSeconds);
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 function loadSavedRoutine(): Stretch[] {
   if (typeof window === "undefined") return defaultRoutine;
 
@@ -279,6 +287,7 @@ export default function Home() {
   const [completed, setCompleted] = useState<number[]>([]);
   const [showEditor, setShowEditor] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
+  const touchStartX = useRef<number | null>(null);
   const [progress, setProgress] = useState<ProgressState>(defaultProgress);
   const [settings, setSettings] = useState<SettingsState>(defaultSettings);
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
@@ -433,6 +442,12 @@ export default function Home() {
     setSecondsLeft(Math.round(routine[nextIndex].duration * paceMultiplier[pace]));
   };
 
+  const handlePrevious = () => {
+    if (!routine.length) return;
+    const previousIndex = activeIndex === 0 ? routine.length - 1 : activeIndex - 1;
+    handleStretchChange(previousIndex);
+  };
+
   const handleNext = () => {
     if (!routine.length) return;
     if (activeIndex === routine.length - 1) {
@@ -443,6 +458,48 @@ export default function Home() {
     }
 
     handleStretchChange(activeIndex + 1);
+  };
+
+  const handleCompleteCurrent = () => {
+    if (!routine.length) return;
+
+    setCompleted((existing) =>
+      existing.includes(activeIndex) ? existing : [...existing, activeIndex]
+    );
+    setIsRunning(false);
+
+    if (activeIndex < routine.length - 1) {
+      handleStretchChange(activeIndex + 1);
+      return;
+    }
+
+    setSecondsLeft(0);
+  };
+
+  const handleStopTimer = () => {
+    if (!routine.length) return;
+    setIsRunning(false);
+    setSecondsLeft(Math.round(routine[activeIndex].duration * paceMultiplier[pace]));
+  };
+
+  const handleTouchStart = (event: React.TouchEvent<HTMLElement>) => {
+    touchStartX.current = event.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (event: React.TouchEvent<HTMLElement>) => {
+    if (touchStartX.current === null) return;
+
+    const swipeDistance = event.changedTouches[0].clientX - touchStartX.current;
+    touchStartX.current = null;
+
+    if (Math.abs(swipeDistance) < 50) return;
+
+    if (swipeDistance > 0) {
+      handlePrevious();
+      return;
+    }
+
+    handleNext();
   };
 
   const handleReset = () => {
@@ -536,10 +593,7 @@ export default function Home() {
               <button
                 aria-label="Previous stretch"
                 className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#182235] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
-                onClick={() => {
-                  const previousIndex = activeIndex === 0 ? routine.length - 1 : activeIndex - 1;
-                  handleStretchChange(previousIndex);
-                }}
+                onClick={handlePrevious}
                 type="button"
               >
                 ‹
@@ -548,14 +602,23 @@ export default function Home() {
                 <p className={`text-[12px] font-semibold ${mutedText}`}>Daily Mobility</p>
                 <h1 className="text-[17px] font-semibold">Stretches</h1>
               </div>
+              <button
+                aria-label="Next stretch"
+                className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#182235] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
+                onClick={handleNext}
+                type="button"
+              >
+                ›
+              </button>
             </div>
 
             <button
-              className={`rounded-full px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-white text-[#111113]"}`}
+              aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+              className={`grid h-10 w-10 place-items-center rounded-full text-lg shadow-[0_1px_2px_rgba(0,0,0,0.08)] ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-white text-[#111113]"}`}
               onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
               type="button"
             >
-              {theme === "light" ? "Dark" : "Light"}
+              {theme === "light" ? "☾" : "☀"}
             </button>
           </div>
 
@@ -571,26 +634,32 @@ export default function Home() {
 
         {view === "today" ? (
           <>
-            <div className="mt-4 grid grid-cols-3 rounded-xl bg-[#e5e5ea] p-1">
-              {(["calm", "steady", "deep"] as const).map((mode) => (
-                <button
-                  className={`h-9 rounded-lg text-[13px] font-semibold capitalize transition ${
-                    pace === mode
-                      ? theme === "dark"
-                        ? "bg-[#182235] text-white shadow-sm"
-                        : "bg-white text-[#111113] shadow-sm"
-                      : "text-[#6e6e73]"
-                  }`}
-                  key={mode}
-                  onClick={() => setPace(mode)}
-                  type="button"
-                >
-                  {mode}
-                </button>
-              ))}
+            <div className={`mt-4 grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded-xl p-1 ${theme === "dark" ? "bg-[#182235]" : "bg-[#e5e5ea]"}`}>
+              <div className={`flex h-9 items-center justify-between rounded-lg px-3 ${theme === "dark" ? "bg-[#111827] text-white" : "bg-white text-[#111113]"} shadow-sm`}>
+                <span className={`text-[12px] font-bold uppercase ${mutedText}`}>Timer</span>
+                <span className="text-[17px] font-bold tabular-nums">{formatTime(secondsLeft)}</span>
+              </div>
+              <button
+                className={`h-9 rounded-lg px-3 text-[13px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
+                onClick={() => setIsRunning(true)}
+                type="button"
+              >
+                Start
+              </button>
+              <button
+                className={`h-9 rounded-lg px-3 text-[13px] font-semibold ${theme === "dark" ? "bg-[#111827] text-[#dfe8ff]" : "bg-white text-[#0b57d0]"}`}
+                onClick={handleStopTimer}
+                type="button"
+              >
+                Stop
+              </button>
             </div>
 
-            <section className={`mt-4 rounded-[28px] p-5 shadow-[0_12px_32px_rgba(0,0,0,0.08)] ${panelClass}`}>
+            <section
+              className={`mt-4 rounded-[28px] p-5 shadow-[0_12px_32px_rgba(0,0,0,0.08)] ${panelClass}`}
+              onTouchEnd={handleTouchEnd}
+              onTouchStart={handleTouchStart}
+            >
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-[13px] font-semibold text-[#007aff]">{activeStretch.area}</p>
@@ -617,7 +686,7 @@ export default function Home() {
                     <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#6e6e73]">
                       Timer
                     </div>
-                    <div className="text-5xl font-bold tabular-nums text-[#111113]">{secondsLeft}s</div>
+                    <div className="text-5xl font-bold tabular-nums text-[#111113]">{formatTime(secondsLeft)}</div>
                   </div>
                 </div>
               </div>
@@ -631,16 +700,16 @@ export default function Home() {
                 <p className="mt-1 text-[17px] font-semibold">{activeStretch.cue}</p>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-3">
+              <div className="mt-5 grid grid-cols-[1fr_auto] gap-3">
                 <button
                   className={`h-14 rounded-2xl text-[17px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"} shadow-[0_10px_20px_rgba(17,17,19,0.16)]`}
-                  onClick={() => setIsRunning((current) => !current)}
+                  onClick={handleCompleteCurrent}
                   type="button"
                 >
-                  {isRunning ? "Pause" : "Start hold"}
+                  Completed
                 </button>
                 <button
-                  className={`h-14 rounded-2xl text-[17px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}
+                  className={`h-14 rounded-2xl px-5 text-[17px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}
                   onClick={handleNext}
                   type="button"
                 >
