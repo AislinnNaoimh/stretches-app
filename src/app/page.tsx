@@ -36,15 +36,26 @@ type ProgressState = {
   bestStreak: number;
   completedDates: string[];
   stretchStats: Record<string, StretchTiming>;
+  dailyLogs: Record<string, DailyLog>;
 };
 
 type StretchTiming = {
   sessions: number;
+  timedSessions: number;
   totalSeconds: number;
   lastSeconds: number | null;
   lastCompletedDate: string | null;
   todaySeconds: number | null;
   todayDate: string | null;
+};
+
+type DailyLog = {
+  completed: number;
+  skipped: number;
+  totalSeconds: number;
+  timedSessions: number;
+  difficultyTotal: number;
+  difficultyEntries: number;
 };
 
 type SettingsState = {
@@ -162,7 +173,8 @@ const defaultProgress: ProgressState = {
   currentStreak: 0,
   bestStreak: 0,
   completedDates: [],
-  stretchStats: {}
+  stretchStats: {},
+  dailyLogs: {}
 };
 
 const defaultSettings: SettingsState = {
@@ -190,13 +202,54 @@ function getRecentDateKeys(count: number) {
   }).reverse();
 }
 
+function getWeekDateKeys() {
+  const today = new Date();
+  const day = today.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + mondayOffset);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    return date.toISOString().slice(0, 10);
+  });
+}
+
+function getMonthDateKeys(dateKey: string) {
+  const current = new Date(`${dateKey}T00:00:00`);
+  const firstDay = new Date(current.getFullYear(), current.getMonth(), 1);
+  const lastDay = new Date(current.getFullYear(), current.getMonth() + 1, 0);
+  const leadingBlanks = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1;
+  const days = Array.from({ length: lastDay.getDate() }, (_, index) => {
+    const date = new Date(current.getFullYear(), current.getMonth(), index + 1);
+    return date.toISOString().slice(0, 10);
+  });
+
+  return [...Array.from({ length: leadingBlanks }, () => null), ...days];
+}
+
 function normalizeProgress(progress: Partial<ProgressState>): ProgressState {
+  const stretchStats = progress.stretchStats && typeof progress.stretchStats === "object"
+    ? Object.fromEntries(
+        Object.entries(progress.stretchStats).map(([key, timing]) => [
+          key,
+          {
+            ...emptyStretchTiming(),
+            ...timing,
+            timedSessions: timing.timedSessions ?? (timing.lastSeconds === null ? 0 : timing.sessions)
+          }
+        ])
+      )
+    : {};
+
   return {
     ...defaultProgress,
     ...progress,
     completedDates: Array.isArray(progress.completedDates) ? progress.completedDates : [],
-    stretchStats: progress.stretchStats && typeof progress.stretchStats === "object"
-      ? progress.stretchStats
+    stretchStats,
+    dailyLogs: progress.dailyLogs && typeof progress.dailyLogs === "object"
+      ? progress.dailyLogs
       : {}
   };
 }
@@ -209,6 +262,10 @@ function formatTime(totalSeconds: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function formatShortDate() {
+  return new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short" }).replace(" ", "/");
+}
+
 function getStretchKey(stretch: Stretch) {
   return `${stretch.name}-${stretch.area}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
@@ -216,11 +273,23 @@ function getStretchKey(stretch: Stretch) {
 function emptyStretchTiming(): StretchTiming {
   return {
     sessions: 0,
+    timedSessions: 0,
     totalSeconds: 0,
     lastSeconds: null,
     lastCompletedDate: null,
     todaySeconds: null,
     todayDate: null
+  };
+}
+
+function emptyDailyLog(): DailyLog {
+  return {
+    completed: 0,
+    skipped: 0,
+    totalSeconds: 0,
+    timedSessions: 0,
+    difficultyTotal: 0,
+    difficultyEntries: 0
   };
 }
 
@@ -312,14 +381,17 @@ export default function Home() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [pace, setPace] = useState<Pace>("steady");
   const [isRunning, setIsRunning] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(defaultRoutine[0].duration);
+  const [secondsLeft, setSecondsLeft] = useState(0);
   const [completed, setCompleted] = useState<number[]>([]);
+  const [skipped, setSkipped] = useState<number[]>([]);
   const [showEditor, setShowEditor] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const [progress, setProgress] = useState<ProgressState>(defaultProgress);
   const [settings, setSettings] = useState<SettingsState>(defaultSettings);
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(getTodayKey());
+  const [weeklyStatsOpen, setWeeklyStatsOpen] = useState(true);
   const [customStretch, setCustomStretch] = useState({
     name: "",
     area: "",
@@ -332,10 +404,15 @@ export default function Home() {
     const stretchKey = getStretchKey(stretch);
     const today = getTodayKey();
     const roundedSeconds = Math.max(0, Math.round(elapsedSeconds));
+    const hasRecordedTime = roundedSeconds > 0;
 
     setProgress((current) => {
       const currentTiming = current.stretchStats[stretchKey] ?? emptyStretchTiming();
+      const currentLog = current.dailyLogs[today] ?? emptyDailyLog();
       const nextSessions = currentTiming.sessions + 1;
+      const nextTimedSessions = hasRecordedTime
+        ? currentTiming.timedSessions + 1
+        : currentTiming.timedSessions;
 
       return {
         ...current,
@@ -343,11 +420,50 @@ export default function Home() {
           ...current.stretchStats,
           [stretchKey]: {
             sessions: nextSessions,
-            totalSeconds: currentTiming.totalSeconds + roundedSeconds,
-            lastSeconds: roundedSeconds,
-            lastCompletedDate: today,
-            todaySeconds: roundedSeconds,
-            todayDate: today
+            timedSessions: nextTimedSessions,
+            totalSeconds: hasRecordedTime
+              ? currentTiming.totalSeconds + roundedSeconds
+              : currentTiming.totalSeconds,
+            lastSeconds: hasRecordedTime ? roundedSeconds : currentTiming.lastSeconds,
+            lastCompletedDate: hasRecordedTime ? today : currentTiming.lastCompletedDate,
+            todaySeconds: hasRecordedTime ? roundedSeconds : currentTiming.todaySeconds,
+            todayDate: hasRecordedTime ? today : currentTiming.todayDate
+          }
+        },
+        dailyLogs: {
+          ...current.dailyLogs,
+          [today]: {
+            ...currentLog,
+            completed: currentLog.completed + 1,
+            totalSeconds: hasRecordedTime
+              ? currentLog.totalSeconds + roundedSeconds
+              : currentLog.totalSeconds,
+            timedSessions: hasRecordedTime
+              ? currentLog.timedSessions + 1
+              : currentLog.timedSessions,
+            difficultyTotal: currentLog.difficultyTotal + 3,
+            difficultyEntries: currentLog.difficultyEntries + 1
+          }
+        }
+      };
+    });
+  }, []);
+
+  const recordStretchSkip = useCallback(() => {
+    const today = getTodayKey();
+
+    setProgress((current) => {
+      const currentLog = current.dailyLogs[today] ?? emptyDailyLog();
+
+      return {
+        ...current,
+        dailyLogs: {
+          ...current.dailyLogs,
+          [today]: {
+            ...currentLog,
+            skipped: currentLog.skipped + 1,
+            difficultyTotal: currentLog.difficultyTotal + 3,
+            difficultyEntries: currentLog.difficultyEntries + 1
           }
         }
       };
@@ -365,7 +481,7 @@ export default function Home() {
       setRoutine(savedRoutine);
       setPlanner(loadSavedPlanner());
       setProgress(loadSavedProgress());
-      setSecondsLeft(Math.round(savedRoutine[0].duration * paceMultiplier[savedSettings.defaultPace]));
+      setSecondsLeft(0);
 
       if (storedTheme === "dark" || storedTheme === "light") {
         setTheme(storedTheme);
@@ -404,7 +520,7 @@ export default function Home() {
   useEffect(() => {
     if (!routine.length) return;
     window.requestAnimationFrame(() => {
-      setSecondsLeft(Math.round(routine[activeIndex].duration * paceMultiplier[pace]));
+      setSecondsLeft(0);
       setIsRunning(false);
     });
   }, [activeIndex, pace, routine]);
@@ -413,32 +529,11 @@ export default function Home() {
     if (!routine.length || !isRunning) return;
 
     const timer = window.setInterval(() => {
-      setSecondsLeft((current) => {
-        if (current <= 1) {
-          playAlert(settings.soundEnabled);
-          recordStretchCompletion(
-            routine[activeIndex],
-            routine[activeIndex].duration * paceMultiplier[pace]
-          );
-          setCompleted((existing) =>
-            existing.includes(activeIndex) ? existing : [...existing, activeIndex]
-          );
-
-          if (activeIndex === routine.length - 1) {
-            setIsRunning(false);
-            return 0;
-          }
-
-          setActiveIndex((nextIndex) => nextIndex + 1);
-          return 0;
-        }
-
-        return current - 1;
-      });
+      setSecondsLeft((current) => current + 1);
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [activeIndex, isRunning, pace, recordStretchCompletion, routine, settings.soundEnabled]);
+  }, [isRunning, routine.length]);
 
   const activeStretch = routine[activeIndex] ?? routine[0];
   const adjustedDuration = activeStretch ? Math.round(activeStretch.duration * paceMultiplier[pace]) : 0;
@@ -456,19 +551,33 @@ export default function Home() {
     [routine]
   );
   const progressPercent = routine.length ? ((activeIndex + 1) / routine.length) * 100 : 0;
-  const sessionComplete = routine.length > 0 && completed.length >= routine.length;
-  const totalWeeklyTasks = planner.reduce((sum, day) => sum + day.tasks.length, 0);
-  const completedWeeklyTasks = planner.reduce(
-    (sum, day) => sum + day.tasks.filter((task) => task.done).length,
+  const sessionComplete = routine.length > 0 && routine.every((_, index) =>
+    completed.includes(index) || skipped.includes(index)
+  );
+  const weeklyDateKeys = getWeekDateKeys();
+  const weeklyStretchTarget = 45;
+  const completedWeeklyStretches = weeklyDateKeys.reduce(
+    (sum, dateKey) => sum + (progress.dailyLogs[dateKey]?.completed ?? 0),
     0
   );
-  const weeklyProgressPct = totalWeeklyTasks ? (completedWeeklyTasks / totalWeeklyTasks) * 100 : 0;
+  const weeklyProgressPct = (completedWeeklyStretches / weeklyStretchTarget) * 100;
   const selectedDay = planner[selectedDayIndex] ?? planner[0];
   const todayMinutes = progress.lastCompletedDate === getTodayKey() ? Math.round(routineLength / 60) : 0;
   const dailyGoalProgress = settings.dailyGoalMinutes
     ? Math.min((todayMinutes / settings.dailyGoalMinutes) * 100, 100)
     : 0;
-  const recentDates = getRecentDateKeys(7);
+  const monthDateKeys = getMonthDateKeys(selectedCalendarDate);
+  const selectedDailyLog = progress.dailyLogs[selectedCalendarDate] ?? emptyDailyLog();
+  const selectedCompletionTotal = selectedDailyLog.completed + selectedDailyLog.skipped;
+  const selectedCompletionPct = selectedCompletionTotal
+    ? Math.round((selectedDailyLog.completed / selectedCompletionTotal) * 100)
+    : 0;
+  const selectedDifficultyPct = selectedDailyLog.difficultyEntries
+    ? Math.round((selectedDailyLog.difficultyTotal / (selectedDailyLog.difficultyEntries * 5)) * 100)
+    : 0;
+  const selectedAvgSeconds = selectedDailyLog.timedSessions
+    ? Math.round(selectedDailyLog.totalSeconds / selectedDailyLog.timedSessions)
+    : null;
 
   useEffect(() => {
     if (!sessionComplete) return;
@@ -499,7 +608,6 @@ export default function Home() {
           completedDates
         };
       });
-      setCompleted([]);
     });
   }, [sessionComplete, routineLength]);
 
@@ -507,7 +615,7 @@ export default function Home() {
     if (!routine.length) return;
     setActiveIndex(nextIndex);
     setIsRunning(false);
-    setSecondsLeft(Math.round(routine[nextIndex].duration * paceMultiplier[pace]));
+    setSecondsLeft(0);
   };
 
   const handlePrevious = () => {
@@ -520,7 +628,7 @@ export default function Home() {
     if (!routine.length) return;
     if (activeIndex === routine.length - 1) {
       setActiveIndex(0);
-      setSecondsLeft(Math.round(routine[0].duration * paceMultiplier[pace]));
+      setSecondsLeft(0);
       setIsRunning(false);
       return;
     }
@@ -532,12 +640,13 @@ export default function Home() {
     if (!routine.length) return;
 
     if (!completed.includes(activeIndex)) {
-      recordStretchCompletion(activeStretch, adjustedDuration - secondsLeft);
+      recordStretchCompletion(activeStretch, secondsLeft);
     }
 
     setCompleted((existing) =>
       existing.includes(activeIndex) ? existing : [...existing, activeIndex]
     );
+    setSkipped((existing) => existing.filter((index) => index !== activeIndex));
     setIsRunning(false);
 
     if (activeIndex < routine.length - 1) {
@@ -548,10 +657,24 @@ export default function Home() {
     setSecondsLeft(0);
   };
 
+  const handleSkipCurrent = () => {
+    if (!routine.length) return;
+
+    if (!completed.includes(activeIndex) && !skipped.includes(activeIndex)) {
+      recordStretchSkip();
+    }
+
+    setSkipped((existing) =>
+      existing.includes(activeIndex) ? existing : [...existing, activeIndex]
+    );
+    setIsRunning(false);
+    handleNext();
+  };
+
   const handleStopTimer = () => {
     if (!routine.length) return;
     setIsRunning(false);
-    setSecondsLeft(Math.round(routine[activeIndex].duration * paceMultiplier[pace]));
+    setSecondsLeft(0);
   };
 
   const handleTouchStart = (event: React.TouchEvent<HTMLElement>) => {
@@ -577,10 +700,9 @@ export default function Home() {
   const handleReset = () => {
     setActiveIndex(0);
     setCompleted([]);
+    setSkipped([]);
     setIsRunning(false);
-    if (routine.length) {
-      setSecondsLeft(Math.round(routine[0].duration * paceMultiplier[pace]));
-    }
+    setSecondsLeft(0);
   };
 
   const addCustomStretch = () => {
@@ -616,6 +738,7 @@ export default function Home() {
 
     setRoutine((current) => current.filter((_, index) => index !== indexToRemove));
     setCompleted((current) => current.filter((index) => index !== indexToRemove));
+    setSkipped((current) => current.filter((index) => index !== indexToRemove));
 
     if (activeIndex >= routine.length - 1) {
       setActiveIndex(Math.max(0, routine.length - 2));
@@ -626,8 +749,9 @@ export default function Home() {
     setRoutine(defaultRoutine);
     setActiveIndex(0);
     setCompleted([]);
+    setSkipped([]);
     setIsRunning(false);
-    setSecondsLeft(Math.round(defaultRoutine[0].duration * paceMultiplier[pace]));
+    setSecondsLeft(0);
     setShowEditor(false);
   };
 
@@ -684,14 +808,19 @@ export default function Home() {
               </button>
             </div>
 
-            <button
-              aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-              className={`grid h-10 w-10 place-items-center rounded-full text-lg shadow-[0_1px_2px_rgba(0,0,0,0.08)] ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-white text-[#111113]"}`}
-              onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
-              type="button"
-            >
-              {theme === "light" ? "☾" : "☀"}
-            </button>
+            <div className="flex items-center gap-2">
+              <span className={`rounded-full px-3 py-2 text-[12px] font-bold uppercase ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-white text-[#111113]"}`}>
+                {formatShortDate()}
+              </span>
+              <button
+                aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+                className={`grid h-10 w-10 place-items-center rounded-full text-lg shadow-[0_1px_2px_rgba(0,0,0,0.08)] ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-white text-[#111113]"}`}
+                onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
+                type="button"
+              >
+                {theme === "light" ? "☾" : "☀"}
+              </button>
+            </div>
           </div>
 
           {view === "today" ? (
@@ -706,7 +835,7 @@ export default function Home() {
 
         {view === "today" ? (
           <>
-            <div className={`mt-4 grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded-xl p-1 ${theme === "dark" ? "bg-[#182235]" : "bg-[#e5e5ea]"}`}>
+            <div className={`mt-4 grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 rounded-xl p-1 ${theme === "dark" ? "bg-[#182235]" : "bg-[#e5e5ea]"}`}>
               <div className={`flex h-9 items-center justify-between rounded-lg px-3 ${theme === "dark" ? "bg-[#111827] text-white" : "bg-white text-[#111113]"} shadow-sm`}>
                 <span className={`text-[12px] font-bold uppercase ${mutedText}`}>Timer</span>
                 <span className="text-[17px] font-bold tabular-nums">{formatTime(secondsLeft)}</span>
@@ -717,6 +846,13 @@ export default function Home() {
                 type="button"
               >
                 Start
+              </button>
+              <button
+                className={`h-9 rounded-lg px-3 text-[13px] font-semibold ${theme === "dark" ? "bg-[#111827] text-[#dfe8ff]" : "bg-white text-[#0b57d0]"}`}
+                onClick={() => setIsRunning(false)}
+                type="button"
+              >
+                Pause
               </button>
               <button
                 className={`h-9 rounded-lg px-3 text-[13px] font-semibold ${theme === "dark" ? "bg-[#111827] text-[#dfe8ff]" : "bg-white text-[#0b57d0]"}`}
@@ -782,26 +918,14 @@ export default function Home() {
                 </button>
                 <button
                   className={`h-14 rounded-2xl px-5 text-[17px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}
-                  onClick={handleNext}
+                  onClick={handleSkipCurrent}
                   type="button"
                 >
                   Skip
                 </button>
               </div>
-            </section>
 
-            <section className={`mt-5 rounded-[24px] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.04)] ${panelClass}`}>
-              <div className="flex items-center justify-between">
-                <h2 className="text-[18px] font-bold">Saved progress</h2>
-                <button
-                  className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#0b57d0]"
-                  onClick={() => setShowEditor((current) => !current)}
-                  type="button"
-                >
-                  {showEditor ? "Close" : "Customize"}
-                </button>
-              </div>
-
+              <h3 className="mt-6 text-[18px] font-bold">Stats</h3>
               <div className="mt-3 grid grid-cols-4 gap-2 text-center">
                 <div className={`rounded-2xl ${softPanelClass} p-3`}>
                   <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Sessions</div>
@@ -826,89 +950,11 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-
-              {showEditor ? (
-                <div className={`mt-4 space-y-3 rounded-2xl border p-3 ${theme === "dark" ? "border-white/10 bg-[#0f172a]" : "border-[#e5e5ea] bg-[#fafafa]"}`}>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                      onChange={(event) =>
-                        setCustomStretch((current) => ({ ...current, name: event.target.value }))
-                      }
-                      placeholder="Stretch name"
-                      value={customStretch.name}
-                    />
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                      onChange={(event) =>
-                        setCustomStretch((current) => ({ ...current, area: event.target.value }))
-                      }
-                      placeholder="Area"
-                      value={customStretch.area}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                      onChange={(event) =>
-                        setCustomStretch((current) => ({ ...current, duration: event.target.value }))
-                      }
-                      placeholder="Seconds"
-                      type="number"
-                      value={customStretch.duration}
-                    />
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                      onChange={(event) =>
-                        setCustomStretch((current) => ({ ...current, focus: event.target.value }))
-                      }
-                      placeholder="Focus"
-                      value={customStretch.focus}
-                    />
-                  </div>
-
-                  <input
-                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                    onChange={(event) =>
-                      setCustomStretch((current) => ({ ...current, cue: event.target.value }))
-                    }
-                    placeholder="Cue"
-                    value={customStretch.cue}
-                  />
-
-                  <textarea
-                    className={`min-h-[80px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                    onChange={(event) =>
-                      setCustomStretch((current) => ({ ...current, note: event.target.value }))
-                    }
-                    placeholder="Instructions"
-                    value={customStretch.note}
-                  />
-
-                  <div className="flex gap-2">
-                    <button
-                      className={`h-11 flex-1 rounded-xl text-[14px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
-                      onClick={addCustomStretch}
-                      type="button"
-                    >
-                      Add stretch
-                    </button>
-                    <button
-                      className={`h-11 flex-1 rounded-xl text-[14px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}
-                      onClick={resetToDefault}
-                      type="button"
-                    >
-                      Reset
-                    </button>
-                  </div>
-                </div>
-              ) : null}
             </section>
 
             <section className={`mt-5 ${panelClass}`}>
               <div className="flex items-center justify-between px-1 py-3">
-                <h2 className="text-[22px] font-bold">Routine</h2>
+                <h2 className="text-[22px] font-bold">Daily Routine</h2>
                 <span className={`text-[15px] font-semibold ${mutedText}`}>
                   {Math.round(routineLength / 60)} min
                 </span>
@@ -917,6 +963,7 @@ export default function Home() {
               <div className="overflow-hidden rounded-2xl bg-transparent">
                 {routine.map((stretch, index) => {
                   const done = completed.includes(index);
+                  const wasSkipped = skipped.includes(index);
 
                   return (
                     <div className={`flex w-full items-center gap-3 border-b px-4 py-3 last:border-b-0 ${theme === "dark" ? "border-white/10" : "border-[#f2f2f7]"}`} key={`${stretch.name}-${index}`}>
@@ -931,12 +978,14 @@ export default function Home() {
                               ? "bg-[#007aff] text-white"
                               : done
                                 ? "bg-[#dff6e8] text-[#1f8f57]"
-                                : theme === "dark"
-                                  ? "bg-[#182235] text-[#dfe8ff]"
-                                  : "bg-[#f2f2f7] text-[#6e6e73]"
+                                : wasSkipped
+                                  ? "bg-[#ffe4e0] text-[#c32f27]"
+                                  : theme === "dark"
+                                    ? "bg-[#182235] text-[#dfe8ff]"
+                                    : "bg-[#f2f2f7] text-[#6e6e73]"
                           }`}
                         >
-                          {done ? "✓" : index + 1}
+                          {done ? "✓" : wasSkipped ? "!" : ""}
                         </span>
                         <span className="min-w-0 flex-1">
                           <strong className="block truncate text-[17px]">{stretch.name}</strong>
@@ -945,15 +994,6 @@ export default function Home() {
                         <span className={`text-[15px] font-semibold ${theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}>
                           {Math.round(stretch.duration * paceMultiplier[pace])}s
                         </span>
-                      </button>
-
-                      <button
-                        aria-label={`Remove ${stretch.name}`}
-                        className={`flex h-8 w-8 items-center justify-center rounded-full ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#6e6e73]"} text-lg`}
-                        onClick={() => removeStretch(index)}
-                        type="button"
-                      >
-                        ×
                       </button>
                     </div>
                   );
