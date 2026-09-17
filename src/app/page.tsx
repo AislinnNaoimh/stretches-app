@@ -928,12 +928,12 @@ export default function Home() {
                       >
                         <span
                           className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${
-                            index === activeIndex
-                              ? "bg-[#007aff] text-white"
-                              : done
-                                ? "bg-[#dff6e8] text-[#1f8f57]"
-                                : wasSkipped
-                                  ? "bg-[#ffe4e0] text-[#c32f27]"
+                            done
+                              ? "bg-[#dff6e8] text-[#1f8f57]"
+                              : wasSkipped
+                                ? "bg-[#ffe4e0] text-[#c32f27]"
+                                : index === activeIndex
+                                  ? "bg-[#007aff] text-white"
                                   : theme === "dark"
                                     ? "bg-[#182235] text-[#dfe8ff]"
                                     : "bg-[#f2f2f7] text-[#6e6e73]"
