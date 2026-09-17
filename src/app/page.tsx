@@ -194,14 +194,6 @@ function getPreviousDateKey(dateKey: string) {
   return date.toISOString().slice(0, 10);
 }
 
-function getRecentDateKeys(count: number) {
-  return Array.from({ length: count }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - index);
-    return date.toISOString().slice(0, 10);
-  }).reverse();
-}
-
 function getWeekDateKeys() {
   const today = new Date();
   const day = today.getDay();
@@ -344,32 +336,6 @@ function loadSavedSettings(): SettingsState {
     return { ...defaultSettings, ...(JSON.parse(saved) as Partial<SettingsState>) };
   } catch {
     return defaultSettings;
-  }
-}
-
-function playAlert(soundEnabled: boolean) {
-  if (typeof window === "undefined" || !soundEnabled) return;
-
-  try {
-    const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextClass) return;
-
-    const context = new AudioContextClass();
-    const oscillator = context.createOscillator();
-    const gainNode = context.createGain();
-
-    oscillator.type = "triangle";
-    oscillator.frequency.value = 880;
-    gainNode.gain.value = 0.06;
-
-    oscillator.connect(gainNode);
-    gainNode.connect(context.destination);
-
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.18);
-    void context.close();
-  } catch {
-    // Silence unsupported browsers
   }
 }
 
@@ -543,8 +509,8 @@ export default function Home() {
   const activeStretchTime = activeStretchTiming.todayDate === getTodayKey()
     ? activeStretchTiming.todaySeconds
     : null;
-  const activeStretchAverage = activeStretchTiming.sessions > 0
-    ? Math.round(activeStretchTiming.totalSeconds / activeStretchTiming.sessions)
+  const activeStretchAverage = activeStretchTiming.timedSessions > 0
+    ? Math.round(activeStretchTiming.totalSeconds / activeStretchTiming.timedSessions)
     : null;
   const routineLength = useMemo(
     () => routine.reduce((total, stretch) => total + stretch.duration, 0),
@@ -562,10 +528,6 @@ export default function Home() {
   );
   const weeklyProgressPct = (completedWeeklyStretches / weeklyStretchTarget) * 100;
   const selectedDay = planner[selectedDayIndex] ?? planner[0];
-  const todayMinutes = progress.lastCompletedDate === getTodayKey() ? Math.round(routineLength / 60) : 0;
-  const dailyGoalProgress = settings.dailyGoalMinutes
-    ? Math.min((todayMinutes / settings.dailyGoalMinutes) * 100, 100)
-    : 0;
   const monthDateKeys = getMonthDateKeys(selectedCalendarDate);
   const selectedDailyLog = progress.dailyLogs[selectedCalendarDate] ?? emptyDailyLog();
   const selectedCompletionTotal = selectedDailyLog.completed + selectedDailyLog.skipped;
@@ -733,18 +695,6 @@ export default function Home() {
     setShowEditor(false);
   };
 
-  const removeStretch = (indexToRemove: number) => {
-    if (routine.length <= 1) return;
-
-    setRoutine((current) => current.filter((_, index) => index !== indexToRemove));
-    setCompleted((current) => current.filter((index) => index !== indexToRemove));
-    setSkipped((current) => current.filter((index) => index !== indexToRemove));
-
-    if (activeIndex >= routine.length - 1) {
-      setActiveIndex(Math.max(0, routine.length - 2));
-    }
-  };
-
   const resetToDefault = () => {
     setRoutine(defaultRoutine);
     setActiveIndex(0);
@@ -785,28 +735,32 @@ export default function Home() {
       <section className="mx-auto flex min-h-screen w-full max-w-md flex-col px-4 pb-[calc(92px+env(safe-area-inset-bottom))] pt-[calc(14px+env(safe-area-inset-top))] sm:max-w-lg">
         <header className={`sticky top-0 z-10 -mx-4 px-4 pb-3 pt-[calc(8px+env(safe-area-inset-top))] backdrop-blur-xl ${theme === "dark" ? "bg-[#0b1020]/85" : "bg-[#f5f5f7]/85"}`}>
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <button
-                aria-label="Previous stretch"
-                className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#182235] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
-                onClick={handlePrevious}
-                type="button"
-              >
-                ‹
-              </button>
-              <div className="text-left">
-                <p className={`text-[12px] font-semibold ${mutedText}`}>Daily Mobility</p>
-                <h1 className="text-[17px] font-semibold">Stretches</h1>
+            {view === "today" ? (
+              <div className="flex items-center gap-3">
+                <button
+                  aria-label="Previous stretch"
+                  className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#182235] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
+                  onClick={handlePrevious}
+                  type="button"
+                >
+                  ‹
+                </button>
+                <div className="text-left">
+                  <p className={`text-[12px] font-semibold ${mutedText}`}>Daily Mobility</p>
+                  <h1 className="text-[17px] font-semibold">Stretches</h1>
+                </div>
+                <button
+                  aria-label="Next stretch"
+                  className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#182235] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
+                  onClick={handleNext}
+                  type="button"
+                >
+                  ›
+                </button>
               </div>
-              <button
-                aria-label="Next stretch"
-                className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#182235] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
-                onClick={handleNext}
-                type="button"
-              >
-                ›
-              </button>
-            </div>
+            ) : (
+              <div />
+            )}
 
             <div className="flex items-center gap-2">
               <span className={`rounded-full px-3 py-2 text-[12px] font-bold uppercase ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-white text-[#111113]"}`}>
@@ -1108,16 +1062,102 @@ export default function Home() {
                 ))}
               </div>
             </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <div className="flex items-center justify-between">
+                <h3 className="text-[20px] font-bold">Routine editor</h3>
+                <button
+                  className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#0b57d0]"
+                  onClick={() => setShowEditor((current) => !current)}
+                  type="button"
+                >
+                  {showEditor ? "Close" : "Customize"}
+                </button>
+              </div>
+
+              {showEditor ? (
+                <div className={`mt-4 space-y-3 rounded-2xl border p-3 ${theme === "dark" ? "border-white/10 bg-[#0f172a]" : "border-[#e5e5ea] bg-[#fafafa]"}`}>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      onChange={(event) =>
+                        setCustomStretch((current) => ({ ...current, name: event.target.value }))
+                      }
+                      placeholder="Stretch name"
+                      value={customStretch.name}
+                    />
+                    <input
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      onChange={(event) =>
+                        setCustomStretch((current) => ({ ...current, area: event.target.value }))
+                      }
+                      placeholder="Area"
+                      value={customStretch.area}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      onChange={(event) =>
+                        setCustomStretch((current) => ({ ...current, duration: event.target.value }))
+                      }
+                      placeholder="Seconds"
+                      type="number"
+                      value={customStretch.duration}
+                    />
+                    <input
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      onChange={(event) =>
+                        setCustomStretch((current) => ({ ...current, focus: event.target.value }))
+                      }
+                      placeholder="Focus"
+                      value={customStretch.focus}
+                    />
+                  </div>
+
+                  <input
+                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                    onChange={(event) =>
+                      setCustomStretch((current) => ({ ...current, cue: event.target.value }))
+                    }
+                    placeholder="Cue"
+                    value={customStretch.cue}
+                  />
+
+                  <textarea
+                    className={`min-h-[80px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                    onChange={(event) =>
+                      setCustomStretch((current) => ({ ...current, note: event.target.value }))
+                    }
+                    placeholder="Instructions"
+                    value={customStretch.note}
+                  />
+
+                  <div className="flex gap-2">
+                    <button
+                      className={`h-11 flex-1 rounded-xl text-[14px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
+                      onClick={addCustomStretch}
+                      type="button"
+                    >
+                      Add stretch
+                    </button>
+                    <button
+                      className={`h-11 flex-1 rounded-xl text-[14px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}
+                      onClick={resetToDefault}
+                      type="button"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </section>
         ) : null}
 
         {view === "stats" ? (
           <section className="mt-5 space-y-4">
-            <div>
-              <p className={`text-[12px] font-semibold uppercase ${mutedText}`}>Progress snapshot</p>
-              <h2 className="text-[30px] font-bold">Workout summary</h2>
-            </div>
-
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
               <div className="mb-3 flex items-center justify-between">
                 <div>
@@ -1125,113 +1165,178 @@ export default function Home() {
                   <div className="text-[26px] font-bold">{Math.round(weeklyProgressPct)}%</div>
                 </div>
                 <div className="text-[12px] font-semibold text-[#0b57d0]">
-                  {completedWeeklyTasks}/{totalWeeklyTasks} tasks
+                  {completedWeeklyStretches}/{weeklyStretchTarget} stretches
                 </div>
               </div>
 
               <div className="h-2 overflow-hidden rounded-full bg-[#e5e5ea]">
                 <div
                   className="h-full rounded-full bg-[#34c759]"
-                  style={{ width: `${Math.min(weeklyProgressPct, 100)}%` }}
+                  style={{ width: `${weeklyProgressPct}%` }}
                 />
               </div>
             </div>
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <div className="mb-3 flex items-center justify-between">
+              <button
+                className="flex w-full items-center justify-between text-left"
+                onClick={() => setWeeklyStatsOpen((current) => !current)}
+                type="button"
+              >
                 <div>
-                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Current streak</div>
-                  <div className="text-[30px] font-bold">{progress.currentStreak} days</div>
+                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Weekly stats</div>
+                  <div className="text-[30px] font-bold">{completedWeeklyStretches} stretches</div>
                 </div>
-                <div className="rounded-full bg-[#34c759]/15 px-3 py-1 text-[12px] font-bold text-[#166c42]">
-                  Best {progress.bestStreak}
-                </div>
-              </div>
+                <span className={`rounded-full px-3 py-1 text-[12px] font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}>
+                  {weeklyStatsOpen ? "Hide" : "Show"}
+                </span>
+              </button>
 
-              <div className="grid grid-cols-7 gap-2">
-                {recentDates.map((dateKey) => {
-                  const isDone = progress.completedDates.includes(dateKey);
+              {weeklyStatsOpen ? (
+                <div className="mt-4 space-y-3">
+                  {weeklyDateKeys.map((dateKey) => {
+                    const log = progress.dailyLogs[dateKey] ?? emptyDailyLog();
+                    const totalAttempts = log.completed + log.skipped;
+                    const completePct = totalAttempts ? Math.round((log.completed / totalAttempts) * 100) : 0;
+                    const difficultyPct = log.difficultyEntries
+                      ? Math.round((log.difficultyTotal / (log.difficultyEntries * 5)) * 100)
+                      : 0;
+                    const avgSeconds = log.timedSessions
+                      ? Math.round(log.totalSeconds / log.timedSessions)
+                      : null;
+                    const difficultyColor = difficultyPct >= 70
+                      ? "bg-[#ff3b30]"
+                      : difficultyPct >= 40
+                        ? "bg-[#ff9500]"
+                        : "bg-[#34c759]";
                   const day = new Date(`${dateKey}T00:00:00`).toLocaleDateString("en", {
                     weekday: "short"
-                  }).slice(0, 1);
+                  });
 
-                  return (
-                    <div className="text-center" key={dateKey}>
-                      <div className={`mx-auto grid h-9 w-9 place-items-center rounded-full text-[13px] font-bold ${
-                        isDone
-                          ? "bg-[#34c759] text-white"
-                          : theme === "dark"
-                            ? "bg-[#182235] text-[#c5d2ec]"
-                            : "bg-[#f2f2f7] text-[#8e8e93]"
-                      }`}>
-                        {isDone ? "✓" : day}
+                    return (
+                      <div
+                        className={`rounded-2xl p-3 ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}
+                        key={dateKey}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold">{day}</span>
+                          <span className={`text-[12px] font-semibold ${mutedText}`}>
+                            {log.completed} done / {log.skipped} skipped
+                          </span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                          <div>
+                            <div className={`mx-auto grid h-10 w-10 place-items-center rounded-full bg-[#34c759] text-[12px] font-bold text-white`}>
+                              {completePct}%
+                            </div>
+                            <div className={`mt-1 text-[10px] font-semibold uppercase ${mutedText}`}>Done</div>
+                          </div>
+                          <div>
+                            <div className={`mx-auto grid h-10 w-10 place-items-center rounded-full ${difficultyColor} text-[12px] font-bold text-white`}>
+                              {difficultyPct}%
+                            </div>
+                            <div className={`mt-1 text-[10px] font-semibold uppercase ${mutedText}`}>Diff.</div>
+                          </div>
+                          <div>
+                            <div className={`mx-auto grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#111827]" : "bg-white"} text-[11px] font-bold`}>
+                              {avgSeconds === null ? "N/A" : formatTime(avgSeconds)}
+                            </div>
+                            <div className={`mt-1 text-[10px] font-semibold uppercase ${mutedText}`}>Avg.</div>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
               <div className="mb-3 flex items-center justify-between">
                 <div>
-                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Daily goal</div>
-                  <div className="text-[26px] font-bold">{settings.dailyGoalMinutes} min</div>
+                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Calendar</div>
+                  <h3 className="text-[20px] font-bold">
+                    {new Date(`${selectedCalendarDate}T00:00:00`).toLocaleDateString("en", {
+                      month: "long",
+                      year: "numeric"
+                    })}
+                  </h3>
                 </div>
-                <div className="text-[12px] font-semibold text-[#0b57d0]">
-                  {Math.round(dailyGoalProgress)}%
-                </div>
+                <span className={`text-[12px] font-semibold ${mutedText}`}>
+                  {new Date(`${selectedCalendarDate}T00:00:00`).toLocaleDateString("en-GB")}
+                </span>
               </div>
 
-              <div className="h-2 overflow-hidden rounded-full bg-[#e5e5ea]">
-                <div
-                  className="h-full rounded-full bg-[#007aff]"
-                  style={{ width: `${dailyGoalProgress}%` }}
-                />
-              </div>
-            </div>
-
-            <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-[20px] font-bold">Weekly totals</h3>
-                <span className={`text-[12px] font-semibold ${mutedText}`}>Saved</span>
+              <div className={`grid grid-cols-7 gap-1 text-center text-[11px] font-bold uppercase ${mutedText}`}>
+                {["M", "T", "W", "T", "F", "S", "S"].map((day, index) => (
+                  <div key={`${day}-${index}`}>{day}</div>
+                ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className={`rounded-2xl ${softPanelClass} p-3`}>
-                  <div className={`text-[11px] uppercase ${mutedText}`}>Sessions</div>
-                  <div className="mt-2 text-[24px] font-bold">{progress.completedSessions}</div>
-                </div>
-                <div className={`rounded-2xl ${softPanelClass} p-3`}>
-                  <div className={`text-[11px] uppercase ${mutedText}`}>Minutes</div>
-                  <div className="mt-2 text-[24px] font-bold">{progress.totalMinutes}</div>
-                </div>
-                <div className={`rounded-2xl ${softPanelClass} p-3`}>
-                  <div className={`text-[11px] uppercase ${mutedText}`}>Last</div>
-                  <div className="mt-2 text-[12px] font-bold">
-                    {progress.lastCompletedDate ? progress.lastCompletedDate.slice(5) : "-"}
-                  </div>
-                </div>
-              </div>
-            </div>
+              <div className="mt-2 grid grid-cols-7 gap-1">
+                {monthDateKeys.map((dateKey, index) => {
+                  if (!dateKey) {
+                    return <div className="aspect-square" key={`blank-${index}`} />;
+                  }
 
-            <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <h3 className="text-[20px] font-bold">Checklist status</h3>
-              <div className="mt-3 space-y-2">
-                {planner.map((day) => {
-                  const dayDone = day.tasks.filter((task) => task.done).length;
+                  const log = progress.dailyLogs[dateKey] ?? emptyDailyLog();
+                  const isSelected = selectedCalendarDate === dateKey;
+                  const hasProgress = log.completed > 0 || log.skipped > 0;
+                  const date = new Date(`${dateKey}T00:00:00`);
+
                   return (
-                    <div
-                      className={`flex items-center justify-between rounded-2xl px-3 py-2 ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}
-                      key={day.day}
+                    <button
+                      className={`aspect-square rounded-xl text-[12px] font-bold transition ${
+                        isSelected
+                          ? "bg-[#007aff] text-white"
+                          : hasProgress
+                            ? "bg-[#34c759]/20 text-[#166c42]"
+                            : theme === "dark"
+                              ? "bg-[#182235] text-[#c5d2ec]"
+                              : "bg-[#f2f2f7] text-[#6e6e73]"
+                      }`}
+                      key={dateKey}
+                      onClick={() => setSelectedCalendarDate(dateKey)}
+                      type="button"
                     >
-                      <span className="font-semibold">{day.day}</span>
-                      <span className={`text-[12px] font-bold ${mutedText}`}>
-                        {dayDone}/{day.tasks.length}
-                      </span>
-                    </div>
+                      {date.getDate()}
+                    </button>
                   );
                 })}
+              </div>
+
+              <div className={`mt-4 rounded-2xl p-3 ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold">
+                    {new Date(`${selectedCalendarDate}T00:00:00`).toLocaleDateString("en", {
+                      weekday: "long",
+                      day: "numeric",
+                      month: "short"
+                    })}
+                  </h4>
+                  <span className={`text-[12px] font-semibold ${mutedText}`}>
+                    {selectedDailyLog.completed} completed
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <div className={`${theme === "dark" ? "bg-[#111827]" : "bg-white"} rounded-2xl p-3`}>
+                    <div className={`text-[10px] font-semibold uppercase ${mutedText}`}>Complete</div>
+                    <div className="mt-1 text-[20px] font-bold">{selectedCompletionPct}%</div>
+                  </div>
+                  <div className={`${theme === "dark" ? "bg-[#111827]" : "bg-white"} rounded-2xl p-3`}>
+                    <div className={`text-[10px] font-semibold uppercase ${mutedText}`}>Difficulty</div>
+                    <div className="mt-1 text-[20px] font-bold">{selectedDifficultyPct}%</div>
+                  </div>
+                  <div className={`${theme === "dark" ? "bg-[#111827]" : "bg-white"} rounded-2xl p-3`}>
+                    <div className={`text-[10px] font-semibold uppercase ${mutedText}`}>Avg. time</div>
+                    <div className="mt-1 text-[14px] font-bold tabular-nums">
+                      {selectedAvgSeconds === null ? "N/A" : formatTime(selectedAvgSeconds)}
+                    </div>
+                  </div>
+                </div>
+                <div className={`mt-3 text-[12px] font-semibold ${mutedText}`}>
+                  Total time: {selectedDailyLog.totalSeconds ? formatTime(selectedDailyLog.totalSeconds) : "N/A"} · Skipped: {selectedDailyLog.skipped}
+                </div>
               </div>
             </div>
           </section>
@@ -1371,20 +1476,20 @@ export default function Home() {
               <span>Today</span>
             </button>
             <button
-              className={`ios-tab ${view === "plans" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
-              onClick={() => setView("plans")}
-              type="button"
-            >
-              <span>○</span>
-              <span>Plans</span>
-            </button>
-            <button
               className={`ios-tab ${view === "stats" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
               onClick={() => setView("stats")}
               type="button"
             >
               <span>◌</span>
               <span>Stats</span>
+            </button>
+            <button
+              className={`ios-tab ${view === "plans" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
+              onClick={() => setView("plans")}
+              type="button"
+            >
+              <span>○</span>
+              <span>Plans</span>
             </button>
             <button
               className={`ios-tab ${view === "settings" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
