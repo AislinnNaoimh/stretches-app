@@ -1192,34 +1192,8 @@ export default function Home() {
                 </span>
               </button>
 
-              {weeklyStatsOpen ? (
-                <div className="mt-4 space-y-3">
-                  <div className="grid grid-cols-7 gap-2">
-                    {weeklyDateKeys.map((dateKey) => {
-                      const log = progress.dailyLogs[dateKey] ?? emptyDailyLog();
-                      const date = new Date(`${dateKey}T00:00:00`);
-                      const day = date.toLocaleDateString("en", { weekday: "short" }).slice(0, 1);
-                      const hasProgress = log.completed > 0 || log.skipped > 0;
-
-                      return (
-                        <div className="text-center" key={dateKey}>
-                          <div className={`mx-auto grid h-9 w-9 place-items-center rounded-full text-[13px] font-bold ${
-                            hasProgress
-                              ? "bg-[#34c759] text-white"
-                              : theme === "dark"
-                                ? "bg-[#182235] text-[#c5d2ec]"
-                                : "bg-[#f2f2f7] text-[#8e8e93]"
-                          }`}>
-                            {day}
-                          </div>
-                          <div className={`mt-1 text-[10px] font-bold ${mutedText}`}>{log.completed}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="space-y-2">
-                    {weeklyDateKeys.map((dateKey) => {
+              <div className="mt-4 grid grid-cols-7 gap-2">
+                {weeklyDateKeys.map((dateKey) => {
                     const log = progress.dailyLogs[dateKey] ?? emptyDailyLog();
                     const totalAttempts = log.completed + log.skipped;
                     const completePct = totalAttempts ? Math.round((log.completed / totalAttempts) * 100) : 0;
@@ -1234,45 +1208,41 @@ export default function Home() {
                       : difficultyPct >= 40
                         ? "bg-[#ff9500]"
                         : "bg-[#34c759]";
-                  const day = new Date(`${dateKey}T00:00:00`).toLocaleDateString("en", {
-                    weekday: "short"
-                  });
+                    const day = new Date(`${dateKey}T00:00:00`).toLocaleDateString("en", {
+                      weekday: "short"
+                    }).slice(0, 1);
+                    const hasProgress = log.completed > 0 || log.skipped > 0;
 
                     return (
-                      <div
-                        className={`grid grid-cols-[64px_1fr_1fr_1fr] items-center gap-2 rounded-2xl p-3 ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}
-                        key={dateKey}
-                      >
-                        <div>
-                          <div className="font-bold">{day}</div>
-                          <div className={`text-[10px] font-semibold ${mutedText}`}>
-                            {log.completed}/{log.skipped}
-                          </div>
+                      <div className="text-center" key={dateKey}>
+                        <div className={`mx-auto grid h-9 w-9 place-items-center rounded-full text-[13px] font-bold ${
+                          hasProgress
+                            ? "bg-[#34c759] text-white"
+                            : theme === "dark"
+                              ? "bg-[#182235] text-[#c5d2ec]"
+                              : "bg-[#f2f2f7] text-[#8e8e93]"
+                        }`}>
+                          {day}
                         </div>
-                        <div className="text-center">
-                          <div className={`mx-auto grid h-9 w-9 place-items-center rounded-full bg-[#34c759] text-[11px] font-bold text-white`}>
-                            {completePct}%
+                        <div className={`mt-1 text-[10px] font-bold ${mutedText}`}>{log.completed}</div>
+
+                        {weeklyStatsOpen ? (
+                          <div className={`mt-2 rounded-xl p-2 ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}>
+                            <div className="text-[10px] font-bold text-[#166c42]">{completePct}%</div>
+                            <div className={`text-[8px] font-semibold uppercase ${mutedText}`}>Done</div>
+                            <div className={`mx-auto mt-2 h-2 w-2 rounded-full ${difficultyColor}`} />
+                            <div className="mt-1 text-[10px] font-bold">{difficultyPct}%</div>
+                            <div className={`text-[8px] font-semibold uppercase ${mutedText}`}>Diff.</div>
+                            <div className="mt-2 text-[10px] font-bold tabular-nums">
+                              {avgSeconds === null ? "N/A" : formatTime(avgSeconds)}
+                            </div>
+                            <div className={`text-[8px] font-semibold uppercase ${mutedText}`}>Avg.</div>
                           </div>
-                          <div className={`mt-1 text-[9px] font-semibold uppercase ${mutedText}`}>Done</div>
-                        </div>
-                        <div className="text-center">
-                          <div className={`mx-auto grid h-9 w-9 place-items-center rounded-full ${difficultyColor} text-[11px] font-bold text-white`}>
-                            {difficultyPct}%
-                          </div>
-                          <div className={`mt-1 text-[9px] font-semibold uppercase ${mutedText}`}>Diff.</div>
-                        </div>
-                        <div className="text-center">
-                          <div className={`mx-auto grid h-9 w-9 place-items-center rounded-full ${theme === "dark" ? "bg-[#111827]" : "bg-white"} text-[10px] font-bold`}>
-                            {avgSeconds === null ? "N/A" : formatTime(avgSeconds)}
-                          </div>
-                          <div className={`mt-1 text-[9px] font-semibold uppercase ${mutedText}`}>Avg.</div>
-                        </div>
+                        ) : null}
                       </div>
                     );
-                    })}
-                  </div>
-                </div>
-              ) : null}
+                })}
+              </div>
             </div>
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
