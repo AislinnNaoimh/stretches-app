@@ -1032,6 +1032,87 @@ export default function Home() {
               </div>
             </div>
 
+            <div className={`rounded-[24px] border p-4 ${theme === "dark" ? "border-white/10" : "border-[#e5e5ea]"} ${panelClass}`}>
+              <button
+                className="flex w-full items-center justify-between text-left"
+                onClick={() => setShowAddStretch((current) => !current)}
+                type="button"
+              >
+                <div>
+                  <span className={`block text-[12px] font-semibold uppercase ${mutedText}`}>Database</span>
+                  <span className="block text-[20px] font-bold">Add stretch</span>
+                </div>
+                <span className={`grid h-8 w-8 place-items-center rounded-full text-[18px] font-bold ${showAddStretch ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}>
+                  {showAddStretch ? "−" : "+"}
+                </span>
+              </button>
+
+              {showAddStretch ? (
+                <div className="mt-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                      onChange={(event) => setCustomStretch((current) => ({ ...current, name: event.target.value }))}
+                      placeholder="Stretch name"
+                      value={customStretch.name}
+                    />
+                    <input
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                      onChange={(event) => setCustomStretch((current) => ({ ...current, reps: event.target.value }))}
+                      placeholder="Reps"
+                      value={customStretch.reps}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                      onChange={(event) => setCustomStretch((current) => ({ ...current, duration: event.target.value }))}
+                      placeholder="Seconds"
+                      type="number"
+                      value={customStretch.duration}
+                    />
+                    <input
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                      onChange={(event) => setCustomStretch((current) => ({ ...current, area: event.target.value }))}
+                      placeholder="Area"
+                      value={customStretch.area}
+                    />
+                  </div>
+
+                  <input
+                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                    onChange={(event) => setCustomStretch((current) => ({ ...current, imageUrl: event.target.value }))}
+                    placeholder="Image URL"
+                    value={customStretch.imageUrl}
+                  />
+
+                  <input
+                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                    onChange={(event) => setCustomStretch((current) => ({ ...current, cue: event.target.value }))}
+                    placeholder="Cue"
+                    value={customStretch.cue}
+                  />
+
+                  <textarea
+                    className={`min-h-[88px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                    onChange={(event) => setCustomStretch((current) => ({ ...current, note: event.target.value }))}
+                    placeholder="Description / notes"
+                    value={customStretch.note}
+                  />
+
+                  <button
+                    className="h-12 w-full rounded-xl bg-[#007aff] text-[15px] font-semibold text-white disabled:opacity-40"
+                    disabled={!customStretch.name.trim()}
+                    onClick={addCustomStretch}
+                    type="button"
+                  >
+                    Add to database
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
               <div className="grid grid-cols-3 gap-3 text-center">
                 <div className={`rounded-2xl ${softPanelClass} p-3`}>
@@ -1178,86 +1259,6 @@ export default function Home() {
               })}
             </div>
 
-            <div className={`rounded-[24px] border p-4 ${theme === "dark" ? "border-white/10" : "border-[#e5e5ea]"} ${panelClass}`}>
-              <button
-                className="flex w-full items-center justify-between text-left"
-                onClick={() => setShowAddStretch((current) => !current)}
-                type="button"
-              >
-                <div>
-                  <span className={`block text-[12px] font-semibold uppercase ${mutedText}`}>Database</span>
-                  <span className="block text-[20px] font-bold">Add stretch</span>
-                </div>
-                <span className={`grid h-8 w-8 place-items-center rounded-full text-[18px] font-bold ${showAddStretch ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}>
-                  {showAddStretch ? "−" : "+"}
-                </span>
-              </button>
-
-              {showAddStretch ? (
-                <div className="mt-4 space-y-3">
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
-                      onChange={(event) => setCustomStretch((current) => ({ ...current, name: event.target.value }))}
-                      placeholder="Stretch name"
-                      value={customStretch.name}
-                    />
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
-                      onChange={(event) => setCustomStretch((current) => ({ ...current, reps: event.target.value }))}
-                      placeholder="Reps"
-                      value={customStretch.reps}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
-                      onChange={(event) => setCustomStretch((current) => ({ ...current, duration: event.target.value }))}
-                      placeholder="Seconds"
-                      type="number"
-                      value={customStretch.duration}
-                    />
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
-                      onChange={(event) => setCustomStretch((current) => ({ ...current, area: event.target.value }))}
-                      placeholder="Area"
-                      value={customStretch.area}
-                    />
-                  </div>
-
-                  <input
-                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
-                    onChange={(event) => setCustomStretch((current) => ({ ...current, imageUrl: event.target.value }))}
-                    placeholder="Image URL"
-                    value={customStretch.imageUrl}
-                  />
-
-                  <input
-                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
-                    onChange={(event) => setCustomStretch((current) => ({ ...current, cue: event.target.value }))}
-                    placeholder="Cue"
-                    value={customStretch.cue}
-                  />
-
-                  <textarea
-                    className={`min-h-[88px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
-                    onChange={(event) => setCustomStretch((current) => ({ ...current, note: event.target.value }))}
-                    placeholder="Description / notes"
-                    value={customStretch.note}
-                  />
-
-                  <button
-                    className="h-12 w-full rounded-xl bg-[#007aff] text-[15px] font-semibold text-white disabled:opacity-40"
-                    disabled={!customStretch.name.trim()}
-                    onClick={addCustomStretch}
-                    type="button"
-                  >
-                    Add to database
-                  </button>
-                </div>
-              ) : null}
-            </div>
           </section>
         ) : null}
 
