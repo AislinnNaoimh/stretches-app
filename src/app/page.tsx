@@ -51,6 +51,7 @@ type DailyLog = {
 type SettingsState = {
   dailyGoalMinutes: number;
   reminderTime: string;
+  reminders: string[];
   soundEnabled: boolean;
   defaultPace: Pace;
 };
@@ -138,6 +139,7 @@ const defaultProgress: ProgressState = {
 const defaultSettings: SettingsState = {
   dailyGoalMinutes: 8,
   reminderTime: "18:30",
+  reminders: ["18:30"],
   soundEnabled: true,
   defaultPace: "steady"
 };
@@ -214,6 +216,14 @@ function formatTime(totalSeconds: number) {
 
 function formatShortDate() {
   return new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function getNextReminderTime(reminders: string[]) {
+  const latestReminder = reminders[reminders.length - 1] ?? defaultSettings.reminderTime;
+  const [hours = 18, minutes = 30] = latestReminder.split(":").map(Number);
+  const nextHours = (hours + 1) % 24;
+
+  return `${nextHours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
 }
 
 function makeStretchId(name: string, area: string) {
@@ -339,7 +349,20 @@ function loadSavedSettings(): SettingsState {
   if (!saved) return defaultSettings;
 
   try {
-    return { ...defaultSettings, ...(JSON.parse(saved) as Partial<SettingsState>) };
+    const parsed = JSON.parse(saved) as Partial<SettingsState>;
+    const savedReminders = Array.isArray(parsed.reminders) && parsed.reminders.length
+      ? parsed.reminders
+      : parsed.reminderTime
+        ? [parsed.reminderTime]
+        : defaultSettings.reminders;
+    const reminders = Array.from(new Set(savedReminders.filter(Boolean))).sort();
+
+    return {
+      ...defaultSettings,
+      ...parsed,
+      reminderTime: reminders[0] ?? defaultSettings.reminderTime,
+      reminders
+    };
   } catch {
     return defaultSettings;
   }
@@ -362,6 +385,7 @@ export default function Home() {
   const [settings, setSettings] = useState<SettingsState>(defaultSettings);
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(getTodayKey());
   const [weeklyStatsOpen, setWeeklyStatsOpen] = useState(true);
+  const [dailyGoalOpen, setDailyGoalOpen] = useState(false);
   const [showAddStretch, setShowAddStretch] = useState(false);
   const [expandedStretchId, setExpandedStretchId] = useState<string | null>(null);
   const [customStretch, setCustomStretch] = useState({
@@ -770,6 +794,107 @@ export default function Home() {
 
       return nextLibrary;
     });
+  };
+
+  const updateReminder = (index: number, value: string) => {
+    setSettings((current) => {
+      const reminders = current.reminders
+        .map((reminder, reminderIndex) => reminderIndex === index ? value : reminder)
+        .filter(Boolean)
+        .sort();
+
+      return {
+        ...current,
+        reminderTime: reminders[0] ?? defaultSettings.reminderTime,
+        reminders: reminders.length ? reminders : [defaultSettings.reminderTime]
+      };
+    });
+  };
+
+  const addReminder = () => {
+    setSettings((current) => {
+      const nextReminder = getNextReminderTime(current.reminders);
+      const reminders = Array.from(new Set([...current.reminders, nextReminder])).sort();
+
+      return {
+        ...current,
+        reminderTime: reminders[0] ?? defaultSettings.reminderTime,
+        reminders
+      };
+    });
+  };
+
+  const removeReminder = (index: number) => {
+    setSettings((current) => {
+      const reminders = current.reminders.filter((_, reminderIndex) => reminderIndex !== index).sort();
+      const nextReminders = reminders.length ? reminders : [defaultSettings.reminderTime];
+
+      return {
+        ...current,
+        reminderTime: nextReminders[0],
+        reminders: nextReminders
+      };
+    });
+  };
+
+  const confirmReset = (warning: string) =>
+    window.confirm(warning) && window.confirm("Are you sure? This cannot be undone.");
+
+  const resetSessionCounts = () => {
+    if (!confirmReset("This will remove ALL recorded sessions data.")) return;
+
+    setProgress((current) => ({
+      ...current,
+      completedSessions: 0,
+      stretchStats: Object.fromEntries(
+        Object.entries(current.stretchStats).map(([key, timing]) => [
+          key,
+          {
+            ...timing,
+            sessions: 0
+          }
+        ])
+      )
+    }));
+  };
+
+  const resetRecordedTimes = () => {
+    if (!confirmReset("This will remove ALL recorded times data.")) return;
+
+    setProgress((current) => ({
+      ...current,
+      totalMinutes: 0,
+      stretchStats: Object.fromEntries(
+        Object.entries(current.stretchStats).map(([key, timing]) => [
+          key,
+          {
+            ...timing,
+            timedSessions: 0,
+            totalSeconds: 0,
+            lastSeconds: null,
+            lastCompletedDate: null,
+            todaySeconds: null,
+            todayDate: null
+          }
+        ])
+      ),
+      dailyLogs: Object.fromEntries(
+        Object.entries(current.dailyLogs).map(([key, log]) => [
+          key,
+          {
+            ...log,
+            totalSeconds: 0,
+            timedSessions: 0
+          }
+        ])
+      )
+    }));
+  };
+
+  const resetAllProgress = () => {
+    if (!confirmReset("This will remove ALL saved information and data.")) return;
+
+    setProgress(defaultProgress);
   };
 
   const appBackground = theme === "dark" ? "bg-[#0b1020] text-white" : "bg-[#f5f5f7] text-[#111113]";
@@ -1450,88 +1575,54 @@ export default function Home() {
             </div>
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <div className="flex items-center justify-between gap-4">
+              <button
+                className="flex w-full items-center justify-between gap-4 text-left"
+                onClick={() => setDailyGoalOpen((current) => !current)}
+                type="button"
+              >
                 <div>
                   <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Daily goal</div>
                   <div className="mt-1 text-[24px] font-bold">{settings.dailyGoalMinutes} min</div>
                 </div>
-                <input
-                  aria-label="Daily goal minutes"
-                  className={`h-11 w-24 rounded-xl border px-3 text-right text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                  min={1}
-                  max={90}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      dailyGoalMinutes: Math.max(1, Number(event.target.value) || 1)
-                    }))
-                  }
-                  type="number"
-                  value={settings.dailyGoalMinutes}
-                />
-              </div>
+                <span className={`grid h-8 w-8 place-items-center rounded-full text-[18px] font-bold ${dailyGoalOpen ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}>
+                  {dailyGoalOpen ? "−" : "+"}
+                </span>
+              </button>
 
-              <input
-                aria-label="Daily goal slider"
-                className="mt-4 w-full accent-[#007aff]"
-                max={30}
-                min={1}
-                onChange={(event) =>
-                  setSettings((current) => ({
-                    ...current,
-                    dailyGoalMinutes: Number(event.target.value)
-                  }))
-                }
-                type="range"
-                value={Math.min(settings.dailyGoalMinutes, 30)}
-              />
-            </div>
-
-            <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Reminder</div>
-                  <div className="mt-1 text-[22px] font-bold">{settings.reminderTime}</div>
+              {dailyGoalOpen ? (
+                <div className="mt-4">
+                  <div className="flex items-center gap-3">
+                    <input
+                      aria-label="Daily goal minutes"
+                      className={`h-11 w-24 rounded-xl border px-3 text-right text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      min={1}
+                      max={90}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          dailyGoalMinutes: Math.min(90, Math.max(1, Number(event.target.value) || 1))
+                        }))
+                      }
+                      type="number"
+                      value={settings.dailyGoalMinutes}
+                    />
+                    <input
+                      aria-label="Daily goal slider"
+                      className="w-full accent-[#007aff]"
+                      max={90}
+                      min={1}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          dailyGoalMinutes: Number(event.target.value)
+                        }))
+                      }
+                      type="range"
+                      value={settings.dailyGoalMinutes}
+                    />
+                  </div>
                 </div>
-                <input
-                  aria-label="Reminder time"
-                  className={`h-11 rounded-xl border px-3 text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                  onChange={(event) =>
-                    setSettings((current) => ({ ...current, reminderTime: event.target.value }))
-                  }
-                  type="time"
-                  value={settings.reminderTime}
-                />
-              </div>
-            </div>
-
-            <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-[20px] font-bold">Default pace</h3>
-                <span className={`text-[12px] font-semibold capitalize ${mutedText}`}>{settings.defaultPace}</span>
-              </div>
-
-              <div className="grid grid-cols-3 rounded-xl bg-[#e5e5ea] p-1">
-                {(["calm", "steady", "deep"] as const).map((mode) => (
-                  <button
-                    className={`h-9 rounded-lg text-[13px] font-semibold capitalize transition ${
-                      settings.defaultPace === mode
-                        ? theme === "dark"
-                          ? "bg-[#182235] text-white shadow-sm"
-                          : "bg-white text-[#111113] shadow-sm"
-                        : "text-[#6e6e73]"
-                    }`}
-                    key={mode}
-                    onClick={() => {
-                      setSettings((current) => ({ ...current, defaultPace: mode }));
-                      setPace(mode);
-                    }}
-                    type="button"
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
+              ) : null}
             </div>
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
@@ -1552,11 +1643,77 @@ export default function Home() {
             </div>
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Reminders</div>
+                  <div className="mt-1 text-[22px] font-bold">{settings.reminders.length}</div>
+                </div>
+                <button
+                  aria-label="Add reminder"
+                  className={`grid h-10 w-10 place-items-center rounded-full text-[22px] font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                  onClick={addReminder}
+                  type="button"
+                >
+                  +
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {settings.reminders.map((reminder, index) => (
+                  <div
+                    className={`flex items-center justify-between gap-3 rounded-2xl p-3 ${softPanelClass}`}
+                    key={`${reminder}-${index}`}
+                  >
+                    <input
+                      aria-label={`Reminder ${index + 1}`}
+                      className={`h-11 rounded-xl border px-3 text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#111827] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      onChange={(event) => updateReminder(index, event.target.value)}
+                      type="time"
+                      value={reminder}
+                    />
+                    <button
+                      aria-label={`Delete reminder ${index + 1}`}
+                      className={`grid h-10 w-10 place-items-center rounded-full text-[20px] font-bold ${theme === "dark" ? "bg-[#111827] text-[#dfe8ff]" : "bg-white text-[#6e6e73]"}`}
+                      onClick={() => removeReminder(index)}
+                      type="button"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <h3 className="text-[20px] font-bold">Sessions reset</h3>
+              <p className={`mt-1 text-[14px] ${mutedText}`}>Clear only recorded stretch session counts.</p>
+              <button
+                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                onClick={resetSessionCounts}
+                type="button"
+              >
+                Reset sessions
+              </button>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <h3 className="text-[20px] font-bold">Timer reset</h3>
+              <p className={`mt-1 text-[14px] ${mutedText}`}>Clear saved stretch times and averages.</p>
+              <button
+                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                onClick={resetRecordedTimes}
+                type="button"
+              >
+                Reset times
+              </button>
+            </div>
+
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
               <h3 className="text-[20px] font-bold">Progress reset</h3>
-              <p className={`mt-1 text-[14px] ${mutedText}`}>Clear sessions, minutes, streaks, and completed dates.</p>
+              <p className={`mt-1 text-[14px] ${mutedText}`}>Clear all saved information and progress data.</p>
               <button
                 className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
-                onClick={() => setProgress(defaultProgress)}
+                onClick={resetAllProgress}
                 type="button"
               >
                 Reset progress
