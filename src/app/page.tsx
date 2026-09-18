@@ -356,7 +356,6 @@ export default function Home() {
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [completed, setCompleted] = useState<number[]>([]);
   const [skipped, setSkipped] = useState<number[]>([]);
-  const [showEditor, setShowEditor] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const [progress, setProgress] = useState<ProgressState>(defaultProgress);
@@ -707,7 +706,6 @@ export default function Home() {
       reps: "",
       imageUrl: ""
     });
-    setShowEditor(false);
   };
 
   const updateStretch = (stretchId: string, updates: Partial<Stretch>) => {
@@ -1019,13 +1017,6 @@ export default function Home() {
                 <p className={`text-[12px] font-semibold uppercase ${mutedText}`}>Stretch library</p>
                 <h2 className="text-[28px] font-bold">Database</h2>
               </div>
-              <button
-                className="rounded-full bg-[#007aff] px-3 py-2 text-[12px] font-bold uppercase tracking-[0.12em] text-white"
-                onClick={() => setShowEditor((current) => !current)}
-                type="button"
-              >
-                Add
-              </button>
             </div>
 
             <div className={`rounded-[28px] p-4 ${panelClass}`}>
@@ -1045,8 +1036,7 @@ export default function Home() {
               </div>
             </div>
 
-            {showEditor ? (
-              <div className={`rounded-[28px] p-4 ${panelClass}`}>
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
                 <h3 className="text-[20px] font-bold">Add stretch</h3>
                 <div className="mt-4 space-y-3">
                     <div className="grid grid-cols-2 gap-2">
@@ -1124,7 +1114,6 @@ export default function Home() {
                     </button>
                   </div>
               </div>
-            ) : null}
 
             <div className="space-y-3">
               {stretchLibrary.map((stretch) => {
@@ -1137,21 +1126,62 @@ export default function Home() {
                     className={`rounded-[24px] border p-4 ${isInRoutine ? "border-[#34c759]" : theme === "dark" ? "border-white/10" : "border-[#e5e5ea]"} ${panelClass}`}
                     key={stretch.id}
                   >
-                    <button
-                      className="flex w-full items-center justify-between gap-3 text-left"
-                      onClick={() => setExpandedStretchId(isExpanded ? null : stretch.id)}
-                      type="button"
-                    >
-                      <span className="min-w-0">
+                    <div className="flex w-full items-center justify-between gap-3">
+                      <div className="min-w-0">
                         <span className="block truncate text-[18px] font-bold">{stretch.name}</span>
                         <span className={`mt-0.5 block text-[13px] ${mutedText}`}>
                           {stretch.area} · {stretch.reps || "No reps"} · {stretch.duration}s
                         </span>
-                      </span>
-                      <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold uppercase ${isInRoutine ? "bg-[#34c759]/15 text-[#166c42]" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#6e6e73]"}`}>
-                        {isInRoutine ? "In plan" : "Library"}
-                      </span>
-                    </button>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          aria-label={isInRoutine ? `Remove ${stretch.name} from plan` : `Add ${stretch.name} to plan`}
+                          className={`grid h-8 w-8 place-items-center rounded-full text-sm font-bold ${isInRoutine ? "bg-[#dff6e8] text-[#1f8f57]" : theme === "dark" ? "bg-[#182235] text-[#c5d2ec]" : "bg-[#f2f2f7] text-[#8e8e93]"}`}
+                          onClick={() => toggleStretchInRoutine(stretch)}
+                          type="button"
+                        >
+                          {isInRoutine ? "✓" : ""}
+                        </button>
+                        <button
+                          aria-label={`Edit ${stretch.name}`}
+                          className={`grid h-8 w-8 place-items-center rounded-full text-sm font-bold ${isExpanded ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                          onClick={() => setExpandedStretchId(isExpanded ? null : stretch.id)}
+                          type="button"
+                        >
+                          ✎
+                        </button>
+                        <div className={`flex rounded-full ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}>
+                          <button
+                            aria-label={`Move ${stretch.name} up`}
+                            className="grid h-8 w-7 place-items-center text-sm font-bold disabled:opacity-30"
+                            disabled={!isInRoutine || routineIndex <= 0}
+                            onClick={() => moveRoutineStretch(stretch.id, -1)}
+                            type="button"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            aria-label={`Move ${stretch.name} down`}
+                            className="grid h-8 w-7 place-items-center text-sm font-bold disabled:opacity-30"
+                            disabled={!isInRoutine || routineIndex === routine.length - 1}
+                            onClick={() => moveRoutineStretch(stretch.id, 1)}
+                            type="button"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                        <button
+                          aria-label={`Remove ${stretch.name} from plan`}
+                          className={`grid h-8 w-8 place-items-center rounded-full text-lg font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#6e6e73]"} disabled:opacity-30`}
+                          disabled={!isInRoutine || routine.length <= 1}
+                          onClick={() => isInRoutine ? toggleStretchInRoutine(stretch) : undefined}
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
 
                     {isExpanded ? (
                       <div className="mt-4 space-y-3">
@@ -1210,33 +1240,6 @@ export default function Home() {
                           value={stretch.note}
                         />
 
-                        <div className="grid grid-cols-[1fr_auto_auto] gap-2">
-                          <button
-                            className={`h-11 rounded-xl text-[14px] font-semibold ${isInRoutine ? theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]" : theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
-                            onClick={() => toggleStretchInRoutine(stretch)}
-                            type="button"
-                          >
-                            {isInRoutine ? "Remove from plan" : "Add to plan"}
-                          </button>
-                          <button
-                            aria-label={`Move ${stretch.name} up`}
-                            className={`h-11 w-11 rounded-xl font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
-                            disabled={!isInRoutine || routineIndex <= 0}
-                            onClick={() => moveRoutineStretch(stretch.id, -1)}
-                            type="button"
-                          >
-                            ↑
-                          </button>
-                          <button
-                            aria-label={`Move ${stretch.name} down`}
-                            className={`h-11 w-11 rounded-xl font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
-                            disabled={!isInRoutine || routineIndex === routine.length - 1}
-                            onClick={() => moveRoutineStretch(stretch.id, 1)}
-                            type="button"
-                          >
-                            ↓
-                          </button>
-                        </div>
                       </div>
                     ) : null}
                   </div>
