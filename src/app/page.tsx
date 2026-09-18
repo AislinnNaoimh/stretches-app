@@ -7,25 +7,15 @@ type ThemeMode = "light" | "dark";
 type ViewMode = "today" | "plans" | "stats" | "settings";
 
 type Stretch = {
+  id: string;
   name: string;
   area: string;
   duration: number;
   note: string;
   cue: string;
   focus: string;
-};
-
-type WeeklyTask = {
-  id: string;
-  label: string;
-  done: boolean;
-};
-
-type DailyPlan = {
-  day: string;
-  focus: string;
-  active: boolean;
-  tasks: WeeklyTask[];
+  reps?: string;
+  imageUrl?: string;
 };
 
 type ProgressState = {
@@ -67,6 +57,7 @@ type SettingsState = {
 
 const defaultRoutine: Stretch[] = [
   {
+    id: "neck-release",
     name: "Neck release",
     area: "Upper body",
     duration: 45,
@@ -75,6 +66,7 @@ const defaultRoutine: Stretch[] = [
     focus: "Tension"
   },
   {
+    id: "chest-opener",
     name: "Chest opener",
     area: "Posture",
     duration: 60,
@@ -83,6 +75,7 @@ const defaultRoutine: Stretch[] = [
     focus: "Breath"
   },
   {
+    id: "hip-flexor-lunge",
     name: "Hip flexor lunge",
     area: "Hips",
     duration: 75,
@@ -91,6 +84,7 @@ const defaultRoutine: Stretch[] = [
     focus: "Mobility"
   },
   {
+    id: "hamstring-fold",
     name: "Hamstring fold",
     area: "Legs",
     duration: 60,
@@ -99,6 +93,7 @@ const defaultRoutine: Stretch[] = [
     focus: "Length"
   },
   {
+    id: "figure-four-stretch",
     name: "Figure-four stretch",
     area: "Glutes",
     duration: 60,
@@ -107,6 +102,7 @@ const defaultRoutine: Stretch[] = [
     focus: "Release"
   },
   {
+    id: "calf-pump",
     name: "Calf pump",
     area: "Lower legs",
     duration: 40,
@@ -116,44 +112,6 @@ const defaultRoutine: Stretch[] = [
   }
 ];
 
-const defaultPlanner: DailyPlan[] = [
-  { day: "Mon", focus: "Mobility reset", active: true, tasks: [
-    { id: "mon-1", label: "10 minute mobility flow", done: false },
-    { id: "mon-2", label: "Neck + chest opener", done: false },
-    { id: "mon-3", label: "Walk after session", done: false }
-  ] },
-  { day: "Tue", focus: "Lower body", active: true, tasks: [
-    { id: "tue-1", label: "Hip flexor work", done: false },
-    { id: "tue-2", label: "Hamstring stretch", done: false },
-    { id: "tue-3", label: "Calves + ankles", done: false }
-  ] },
-  { day: "Wed", focus: "Recovery", active: true, tasks: [
-    { id: "wed-1", label: "Gentle breathing warm-up", done: false },
-    { id: "wed-2", label: "Figure-four stretch", done: false },
-    { id: "wed-3", label: "Light mobility cooldown", done: false }
-  ] },
-  { day: "Thu", focus: "Strength + flexibility", active: true, tasks: [
-    { id: "thu-1", label: "Upper body opener", done: false },
-    { id: "thu-2", label: "Deep lunge sequence", done: false },
-    { id: "thu-3", label: "Stretch hold check-in", done: false }
-  ] },
-  { day: "Fri", focus: "Reset + posture", active: true, tasks: [
-    { id: "fri-1", label: "Posture reset", done: false },
-    { id: "fri-2", label: "Hip release", done: false },
-    { id: "fri-3", label: "Journal energy level", done: false }
-  ] },
-  { day: "Sat", focus: "Longer flow", active: false, tasks: [
-    { id: "sat-1", label: "Full mobility routine", done: false },
-    { id: "sat-2", label: "Deep breathing", done: false },
-    { id: "sat-3", label: "Optional walk", done: false }
-  ] },
-  { day: "Sun", focus: "Recovery day", active: false, tasks: [
-    { id: "sun-1", label: "Light stretching only", done: false },
-    { id: "sun-2", label: "Foam rolling", done: false },
-    { id: "sun-3", label: "Sleep prep", done: false }
-  ] }
-];
-
 const paceMultiplier: Record<Pace, number> = {
   calm: 0.85,
   steady: 1,
@@ -161,8 +119,8 @@ const paceMultiplier: Record<Pace, number> = {
 };
 
 const routineStorageKey = "stretch-routine-v1";
+const stretchLibraryStorageKey = "stretch-library-v1";
 const progressStorageKey = "stretch-progress-v1";
-const plannerStorageKey = "stretch-planner-v1";
 const themeStorageKey = "stretch-theme-v1";
 const settingsStorageKey = "stretch-settings-v1";
 
@@ -258,8 +216,55 @@ function formatShortDate() {
   return new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
 
+function makeStretchId(name: string, area: string) {
+  return `${name}-${area}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function normalizeStretch(stretch: Partial<Stretch>, index: number): Stretch {
+  const name = stretch.name?.trim() || `Stretch ${index + 1}`;
+  const area = stretch.area?.trim() || "Mobility";
+
+  return {
+    id: stretch.id || makeStretchId(name, area) || `stretch-${index + 1}`,
+    name,
+    area,
+    duration: Number(stretch.duration) || 30,
+    note: stretch.note || "Move slowly and focus on your breathing.",
+    cue: stretch.cue || "Keep the movement smooth",
+    focus: stretch.focus || "Mobility",
+    reps: stretch.reps || "",
+    imageUrl: stretch.imageUrl || ""
+  };
+}
+
+function normalizeStretchList(stretches: Partial<Stretch>[]) {
+  const seen = new Set<string>();
+
+  return stretches.map((stretch, index) => {
+    const normalized = normalizeStretch(stretch, index);
+    const baseId = normalized.id;
+    let nextId = baseId;
+    let suffix = 2;
+
+    while (seen.has(nextId)) {
+      nextId = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+
+    seen.add(nextId);
+    return { ...normalized, id: nextId };
+  });
+}
+
+function mergeStretchLibrary(library: Stretch[], routine: Stretch[]) {
+  const existingIds = new Set(library.map((stretch) => stretch.id));
+  const missing = routine.filter((stretch) => !existingIds.has(stretch.id));
+
+  return [...library, ...missing];
+}
+
 function getStretchKey(stretch: Stretch) {
-  return `${stretch.name}-${stretch.area}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return stretch.id;
 }
 
 function emptyStretchTiming(): StretchTiming {
@@ -286,16 +291,31 @@ function emptyDailyLog(): DailyLog {
 }
 
 function loadSavedRoutine(): Stretch[] {
-  if (typeof window === "undefined") return defaultRoutine;
+  if (typeof window === "undefined") return normalizeStretchList(defaultRoutine);
 
   const saved = window.localStorage.getItem(routineStorageKey);
-  if (!saved) return defaultRoutine;
+  if (!saved) return normalizeStretchList(defaultRoutine);
 
   try {
-    const parsed = JSON.parse(saved) as Stretch[];
-    return parsed.length > 0 ? parsed : defaultRoutine;
+    const parsed = JSON.parse(saved) as Partial<Stretch>[];
+    return parsed.length > 0 ? normalizeStretchList(parsed) : normalizeStretchList(defaultRoutine);
   } catch {
-    return defaultRoutine;
+    return normalizeStretchList(defaultRoutine);
+  }
+}
+
+function loadSavedStretchLibrary(savedRoutine: Stretch[]): Stretch[] {
+  if (typeof window === "undefined") return normalizeStretchList(defaultRoutine);
+
+  const saved = window.localStorage.getItem(stretchLibraryStorageKey);
+  if (!saved) return mergeStretchLibrary(normalizeStretchList(defaultRoutine), savedRoutine);
+
+  try {
+    const parsed = JSON.parse(saved) as Partial<Stretch>[];
+    const library = parsed.length > 0 ? normalizeStretchList(parsed) : normalizeStretchList(defaultRoutine);
+    return mergeStretchLibrary(library, savedRoutine);
+  } catch {
+    return mergeStretchLibrary(normalizeStretchList(defaultRoutine), savedRoutine);
   }
 }
 
@@ -309,20 +329,6 @@ function loadSavedProgress(): ProgressState {
     return normalizeProgress(JSON.parse(saved) as Partial<ProgressState>);
   } catch {
     return defaultProgress;
-  }
-}
-
-function loadSavedPlanner(): DailyPlan[] {
-  if (typeof window === "undefined") return defaultPlanner;
-
-  const saved = window.localStorage.getItem(plannerStorageKey);
-  if (!saved) return defaultPlanner;
-
-  try {
-    const parsed = JSON.parse(saved) as DailyPlan[];
-    return parsed.length === 7 ? parsed : defaultPlanner;
-  } catch {
-    return defaultPlanner;
   }
 }
 
@@ -342,8 +348,8 @@ function loadSavedSettings(): SettingsState {
 export default function Home() {
   const [view, setView] = useState<ViewMode>("today");
   const [theme, setTheme] = useState<ThemeMode>("light");
-  const [routine, setRoutine] = useState<Stretch[]>(defaultRoutine);
-  const [planner, setPlanner] = useState<DailyPlan[]>(defaultPlanner);
+  const [stretchLibrary, setStretchLibrary] = useState<Stretch[]>(normalizeStretchList(defaultRoutine));
+  const [routine, setRoutine] = useState<Stretch[]>(normalizeStretchList(defaultRoutine));
   const [activeIndex, setActiveIndex] = useState(0);
   const [pace, setPace] = useState<Pace>("steady");
   const [isRunning, setIsRunning] = useState(false);
@@ -355,16 +361,18 @@ export default function Home() {
   const touchStartX = useRef<number | null>(null);
   const [progress, setProgress] = useState<ProgressState>(defaultProgress);
   const [settings, setSettings] = useState<SettingsState>(defaultSettings);
-  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(getTodayKey());
   const [weeklyStatsOpen, setWeeklyStatsOpen] = useState(true);
+  const [expandedStretchId, setExpandedStretchId] = useState<string | null>(null);
   const [customStretch, setCustomStretch] = useState({
     name: "",
     area: "",
     duration: "30",
     note: "",
     cue: "",
-    focus: "Mobility"
+    focus: "Mobility",
+    reps: "",
+    imageUrl: ""
   });
   const recordStretchCompletion = useCallback((stretch: Stretch, elapsedSeconds: number) => {
     const stretchKey = getStretchKey(stretch);
@@ -440,12 +448,13 @@ export default function Home() {
     window.requestAnimationFrame(() => {
       const savedSettings = loadSavedSettings();
       const savedRoutine = loadSavedRoutine();
+      const savedLibrary = loadSavedStretchLibrary(savedRoutine);
       const storedTheme = window.localStorage.getItem(themeStorageKey);
 
       setSettings(savedSettings);
       setPace(savedSettings.defaultPace);
+      setStretchLibrary(savedLibrary);
       setRoutine(savedRoutine);
-      setPlanner(loadSavedPlanner());
       setProgress(loadSavedProgress());
       setSecondsLeft(0);
 
@@ -469,9 +478,9 @@ export default function Home() {
   }, [hasHydrated, routine]);
 
   useEffect(() => {
-    if (!hasHydrated || planner.length === 0) return;
-    window.localStorage.setItem(plannerStorageKey, JSON.stringify(planner));
-  }, [hasHydrated, planner]);
+    if (!hasHydrated || stretchLibrary.length === 0) return;
+    window.localStorage.setItem(stretchLibraryStorageKey, JSON.stringify(stretchLibrary));
+  }, [hasHydrated, stretchLibrary]);
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -527,7 +536,6 @@ export default function Home() {
     0
   );
   const weeklyProgressPct = (completedWeeklyStretches / weeklyStretchTarget) * 100;
-  const selectedDay = planner[selectedDayIndex] ?? planner[0];
   const monthDateKeys = getMonthDateKeys(selectedCalendarDate);
   const selectedDailyLog = progress.dailyLogs[selectedCalendarDate] ?? emptyDailyLog();
   const selectedCompletionTotal = selectedDailyLog.completed + selectedDailyLog.skipped;
@@ -674,50 +682,83 @@ export default function Home() {
 
     if (!name) return;
 
-    const newStretch: Stretch = {
+    const newStretch = normalizeStretch({
+      id: makeStretchId(name, area),
       name,
       area,
       duration,
       note: customStretch.note.trim() || "Move slowly and focus on your breathing.",
       cue: customStretch.cue.trim() || "Keep the movement smooth",
-      focus: customStretch.focus || "Mobility"
-    };
+      focus: customStretch.focus || "Mobility",
+      reps: customStretch.reps.trim(),
+      imageUrl: customStretch.imageUrl.trim()
+    }, stretchLibrary.length);
 
-    setRoutine((current) => [...current, newStretch]);
+    setStretchLibrary((current) => normalizeStretchList([...current, newStretch]));
+    setRoutine((current) => normalizeStretchList([...current, newStretch]));
+    setExpandedStretchId(newStretch.id);
     setCustomStretch({
       name: "",
       area: "",
       duration: "30",
       note: "",
       cue: "",
-      focus: "Mobility"
+      focus: "Mobility",
+      reps: "",
+      imageUrl: ""
     });
     setShowEditor(false);
   };
 
-  const resetToDefault = () => {
-    setRoutine(defaultRoutine);
-    setActiveIndex(0);
-    setCompleted([]);
-    setSkipped([]);
-    setIsRunning(false);
-    setSecondsLeft(0);
-    setShowEditor(false);
+  const updateStretch = (stretchId: string, updates: Partial<Stretch>) => {
+    const applyUpdates = (stretch: Stretch) =>
+      stretch.id === stretchId ? normalizeStretch({ ...stretch, ...updates, id: stretch.id }, 0) : stretch;
+
+    setStretchLibrary((current) => current.map(applyUpdates));
+    setRoutine((current) => current.map(applyUpdates));
   };
 
-  const toggleTask = (dayIndex: number, taskIndex: number) => {
-    setPlanner((current) =>
-      current.map((day, index) =>
-        index !== dayIndex
-          ? day
-          : {
-              ...day,
-              tasks: day.tasks.map((task, idx) =>
-                idx === taskIndex ? { ...task, done: !task.done } : task
-              )
-            }
-      )
-    );
+  const toggleStretchInRoutine = (stretch: Stretch) => {
+    const existsInRoutine = routine.some((item) => item.id === stretch.id);
+
+    setRoutine((current) => {
+      if (existsInRoutine) {
+        if (current.length <= 1) return current;
+
+        const nextRoutine = current.filter((item) => item.id !== stretch.id);
+        const removedIndex = current.findIndex((item) => item.id === stretch.id);
+
+        setCompleted((items) => items.filter((index) => index !== removedIndex));
+        setSkipped((items) => items.filter((index) => index !== removedIndex));
+        setActiveIndex((index) => Math.min(index, Math.max(0, nextRoutine.length - 1)));
+
+        return nextRoutine;
+      }
+
+      return [...current, stretch];
+    });
+    setIsRunning(false);
+    setSecondsLeft(0);
+  };
+
+  const moveRoutineStretch = (stretchId: string, direction: -1 | 1) => {
+    setRoutine((current) => {
+      const currentIndex = current.findIndex((stretch) => stretch.id === stretchId);
+      const nextIndex = currentIndex + direction;
+
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= current.length) return current;
+
+      const nextRoutine = [...current];
+      [nextRoutine[currentIndex], nextRoutine[nextIndex]] = [nextRoutine[nextIndex], nextRoutine[currentIndex]];
+
+      setActiveIndex((index) => {
+        if (index === currentIndex) return nextIndex;
+        if (index === nextIndex) return currentIndex;
+        return index;
+      });
+
+      return nextRoutine;
+    });
   };
 
   const appBackground = theme === "dark" ? "bg-[#0b1020] text-white" : "bg-[#f5f5f7] text-[#111113]";
@@ -726,7 +767,7 @@ export default function Home() {
   const softPanelClass = theme === "dark" ? "bg-[#182235] border border-white/10" : "bg-[#f2f2f7]";
   const navClass = theme === "dark" ? "bg-[#111827]/90 border-white/10" : "bg-white/85 border-black/10";
 
-  if (!routine.length || !planner.length) {
+  if (!stretchLibrary.length) {
     return null;
   }
 
@@ -975,183 +1016,232 @@ export default function Home() {
           <section className="mt-5 space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className={`text-[12px] font-semibold uppercase ${mutedText}`}>7-day plan</p>
-                <h2 className="text-[28px] font-bold">Weekly planner</h2>
+                <p className={`text-[12px] font-semibold uppercase ${mutedText}`}>Stretch library</p>
+                <h2 className="text-[28px] font-bold">Database</h2>
               </div>
               <button
                 className="rounded-full bg-[#007aff] px-3 py-2 text-[12px] font-bold uppercase tracking-[0.12em] text-white"
-                onClick={() => {
-                  setPlanner(defaultPlanner);
-                  setSelectedDayIndex(0);
-                }}
+                onClick={() => setShowEditor((current) => !current)}
                 type="button"
               >
-                Reset
+                Add
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {planner.map((day, index) => {
-                const completedCount = day.tasks.filter((task) => task.done).length;
-                const progressPercentForDay = (completedCount / day.tasks.length) * 100;
-                const isSelected = selectedDayIndex === index;
+            <div className={`rounded-[28px] p-4 ${panelClass}`}>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className={`rounded-2xl ${softPanelClass} p-3`}>
+                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Library</div>
+                  <div className="mt-1 text-[24px] font-bold">{stretchLibrary.length}</div>
+                </div>
+                <div className={`rounded-2xl ${softPanelClass} p-3`}>
+                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>In plan</div>
+                  <div className="mt-1 text-[24px] font-bold">{routine.length}</div>
+                </div>
+                <div className={`rounded-2xl ${softPanelClass} p-3`}>
+                  <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Time</div>
+                  <div className="mt-1 text-[20px] font-bold">{Math.round(routineLength / 60)}m</div>
+                </div>
+              </div>
+            </div>
 
-                return (
-                  <button
-                    className={`rounded-2xl border p-3 text-left transition ${
-                      isSelected
-                        ? theme === "dark"
-                          ? "border-[#007aff] bg-[#182235] shadow-[0_0_0_1px_rgba(0,122,255,0.3)]"
-                          : "border-[#007aff] bg-[#eef3ff]"
-                        : theme === "dark"
-                          ? "border-white/10 bg-[#111827]"
-                          : "border-[#e5e5ea] bg-white"
-                    }`}
-                    key={day.day}
-                    onClick={() => setSelectedDayIndex(index)}
-                    type="button"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Day</div>
-                        <div className="mt-1 text-[18px] font-bold">{day.day}</div>
-                      </div>
-                      <span className="rounded-full bg-[#007aff]/10 px-2 py-1 text-[10px] font-bold uppercase text-[#0b57d0]">
-                        {completedCount}/{day.tasks.length}
-                      </span>
-                    </div>
-
-                    <div className={`mt-3 text-[12px] font-semibold ${mutedText}`}>{day.focus}</div>
-
-                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#e5e5ea]">
-                      <div
-                        className="h-full rounded-full bg-[#34c759]"
-                        style={{ width: `${Math.min(progressPercentForDay, 100)}%` }}
+            {showEditor ? (
+              <div className={`rounded-[28px] p-4 ${panelClass}`}>
+                <h3 className="text-[20px] font-bold">Add stretch</h3>
+                <div className="mt-4 space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                        onChange={(event) =>
+                          setCustomStretch((current) => ({ ...current, name: event.target.value }))
+                        }
+                        placeholder="Stretch name"
+                        value={customStretch.name}
+                      />
+                      <input
+                        className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                        onChange={(event) =>
+                          setCustomStretch((current) => ({ ...current, reps: event.target.value }))
+                        }
+                        placeholder="Reps"
+                        value={customStretch.reps}
                       />
                     </div>
-                  </button>
-                );
-              })}
-            </div>
 
-            <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Selected day</div>
-                  <h3 className="text-[22px] font-bold">{selectedDay.day}</h3>
-                </div>
-                <div className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}>
-                  {selectedDay.focus}
-                </div>
-              </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                        onChange={(event) =>
+                          setCustomStretch((current) => ({ ...current, duration: event.target.value }))
+                        }
+                        placeholder="Seconds"
+                        type="number"
+                        value={customStretch.duration}
+                      />
+                      <input
+                        className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                        onChange={(event) =>
+                          setCustomStretch((current) => ({ ...current, area: event.target.value }))
+                        }
+                        placeholder="Area"
+                        value={customStretch.area}
+                      />
+                    </div>
 
-              <div className="space-y-3">
-                {selectedDay.tasks.map((task, taskIndex) => (
-                  <label
-                    className={`flex cursor-pointer items-center gap-3 rounded-2xl p-3 ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}
-                    key={task.id}
-                  >
                     <input
-                      checked={task.done}
-                      className="h-5 w-5 accent-[#007aff]"
-                      onChange={() => toggleTask(selectedDayIndex, taskIndex)}
-                      type="checkbox"
-                    />
-                    <span className={task.done ? "line-through opacity-60" : ""}>{task.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className={`rounded-[28px] p-4 ${panelClass}`}>
-              <div className="flex items-center justify-between">
-                <h3 className="text-[20px] font-bold">Routine editor</h3>
-                <button
-                  className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#0b57d0]"
-                  onClick={() => setShowEditor((current) => !current)}
-                  type="button"
-                >
-                  {showEditor ? "Close" : "Customize"}
-                </button>
-              </div>
-
-              {showEditor ? (
-                <div className={`mt-4 space-y-3 rounded-2xl border p-3 ${theme === "dark" ? "border-white/10 bg-[#0f172a]" : "border-[#e5e5ea] bg-[#fafafa]"}`}>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                       onChange={(event) =>
-                        setCustomStretch((current) => ({ ...current, name: event.target.value }))
+                        setCustomStretch((current) => ({ ...current, imageUrl: event.target.value }))
                       }
-                      placeholder="Stretch name"
-                      value={customStretch.name}
+                      placeholder="Image URL"
+                      value={customStretch.imageUrl}
                     />
+
                     <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                       onChange={(event) =>
-                        setCustomStretch((current) => ({ ...current, area: event.target.value }))
+                        setCustomStretch((current) => ({ ...current, cue: event.target.value }))
                       }
-                      placeholder="Area"
-                      value={customStretch.area}
+                      placeholder="Cue"
+                      value={customStretch.cue}
                     />
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                    <textarea
+                      className={`min-h-[80px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                       onChange={(event) =>
-                        setCustomStretch((current) => ({ ...current, duration: event.target.value }))
+                        setCustomStretch((current) => ({ ...current, note: event.target.value }))
                       }
-                      placeholder="Seconds"
-                      type="number"
-                      value={customStretch.duration}
+                      placeholder="Description / notes"
+                      value={customStretch.note}
                     />
-                    <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                      onChange={(event) =>
-                        setCustomStretch((current) => ({ ...current, focus: event.target.value }))
-                      }
-                      placeholder="Focus"
-                      value={customStretch.focus}
-                    />
-                  </div>
 
-                  <input
-                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                    onChange={(event) =>
-                      setCustomStretch((current) => ({ ...current, cue: event.target.value }))
-                    }
-                    placeholder="Cue"
-                    value={customStretch.cue}
-                  />
-
-                  <textarea
-                    className={`min-h-[80px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
-                    onChange={(event) =>
-                      setCustomStretch((current) => ({ ...current, note: event.target.value }))
-                    }
-                    placeholder="Instructions"
-                    value={customStretch.note}
-                  />
-
-                  <div className="flex gap-2">
                     <button
-                      className={`h-11 flex-1 rounded-xl text-[14px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
+                      className={`h-11 w-full rounded-xl text-[14px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
                       onClick={addCustomStretch}
                       type="button"
                     >
-                      Add stretch
-                    </button>
-                    <button
-                      className={`h-11 flex-1 rounded-xl text-[14px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}
-                      onClick={resetToDefault}
-                      type="button"
-                    >
-                      Reset
+                      Add to database
                     </button>
                   </div>
-                </div>
-              ) : null}
+              </div>
+            ) : null}
+
+            <div className="space-y-3">
+              {stretchLibrary.map((stretch) => {
+                const isInRoutine = routine.some((item) => item.id === stretch.id);
+                const routineIndex = routine.findIndex((item) => item.id === stretch.id);
+                const isExpanded = expandedStretchId === stretch.id;
+
+                return (
+                  <div
+                    className={`rounded-[24px] border p-4 ${isInRoutine ? "border-[#34c759]" : theme === "dark" ? "border-white/10" : "border-[#e5e5ea]"} ${panelClass}`}
+                    key={stretch.id}
+                  >
+                    <button
+                      className="flex w-full items-center justify-between gap-3 text-left"
+                      onClick={() => setExpandedStretchId(isExpanded ? null : stretch.id)}
+                      type="button"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-[18px] font-bold">{stretch.name}</span>
+                        <span className={`mt-0.5 block text-[13px] ${mutedText}`}>
+                          {stretch.area} · {stretch.reps || "No reps"} · {stretch.duration}s
+                        </span>
+                      </span>
+                      <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold uppercase ${isInRoutine ? "bg-[#34c759]/15 text-[#166c42]" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#6e6e73]"}`}>
+                        {isInRoutine ? "In plan" : "Library"}
+                      </span>
+                    </button>
+
+                    {isExpanded ? (
+                      <div className="mt-4 space-y-3">
+                        {stretch.imageUrl ? (
+                          <div
+                            aria-hidden="true"
+                            className="h-32 w-full rounded-2xl bg-cover bg-center"
+                            style={{ backgroundImage: `url(${stretch.imageUrl})` }}
+                          />
+                        ) : null}
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                            onChange={(event) => updateStretch(stretch.id, { name: event.target.value })}
+                            value={stretch.name}
+                          />
+                          <input
+                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                            onChange={(event) => updateStretch(stretch.id, { reps: event.target.value })}
+                            placeholder="Reps"
+                            value={stretch.reps || ""}
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                            onChange={(event) => updateStretch(stretch.id, { duration: Number(event.target.value) || 0 })}
+                            type="number"
+                            value={stretch.duration}
+                          />
+                          <input
+                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                            onChange={(event) => updateStretch(stretch.id, { area: event.target.value })}
+                            value={stretch.area}
+                          />
+                        </div>
+
+                        <input
+                          className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                          onChange={(event) => updateStretch(stretch.id, { imageUrl: event.target.value })}
+                          placeholder="Image URL"
+                          value={stretch.imageUrl || ""}
+                        />
+
+                        <input
+                          className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                          onChange={(event) => updateStretch(stretch.id, { cue: event.target.value })}
+                          value={stretch.cue}
+                        />
+
+                        <textarea
+                          className={`min-h-[88px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                          onChange={(event) => updateStretch(stretch.id, { note: event.target.value })}
+                          value={stretch.note}
+                        />
+
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+                          <button
+                            className={`h-11 rounded-xl text-[14px] font-semibold ${isInRoutine ? theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]" : theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
+                            onClick={() => toggleStretchInRoutine(stretch)}
+                            type="button"
+                          >
+                            {isInRoutine ? "Remove from plan" : "Add to plan"}
+                          </button>
+                          <button
+                            aria-label={`Move ${stretch.name} up`}
+                            className={`h-11 w-11 rounded-xl font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                            disabled={!isInRoutine || routineIndex <= 0}
+                            onClick={() => moveRoutineStretch(stretch.id, -1)}
+                            type="button"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            aria-label={`Move ${stretch.name} down`}
+                            className={`h-11 w-11 rounded-xl font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                            disabled={!isInRoutine || routineIndex === routine.length - 1}
+                            onClick={() => moveRoutineStretch(stretch.id, 1)}
+                            type="button"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           </section>
         ) : null}
