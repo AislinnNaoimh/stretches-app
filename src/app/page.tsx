@@ -46,6 +46,7 @@ type DailyLog = {
   timedSessions: number;
   difficultyTotal: number;
   difficultyEntries: number;
+  difficultyByStretch: Record<string, number>;
 };
 
 type SettingsState = {
@@ -201,7 +202,16 @@ function normalizeProgress(progress: Partial<ProgressState>): ProgressState {
     completedDates: Array.isArray(progress.completedDates) ? progress.completedDates : [],
     stretchStats,
     dailyLogs: progress.dailyLogs && typeof progress.dailyLogs === "object"
-      ? progress.dailyLogs
+      ? Object.fromEntries(
+          Object.entries(progress.dailyLogs).map(([key, log]) => [
+            key,
+            {
+              ...emptyDailyLog(),
+              ...log,
+              difficultyByStretch: log.difficultyByStretch ?? {}
+            }
+          ])
+        )
       : {}
   };
 }
@@ -224,6 +234,12 @@ function getNextReminderTime(reminders: string[]) {
   const nextHours = (hours + 1) % 24;
 
   return `${nextHours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+}
+
+function difficultyClass(difficulty: number) {
+  if (difficulty <= 1) return "bg-[#dff6e8] text-[#1f8f57]";
+  if (difficulty <= 3) return "bg-[#fff3c4] text-[#8a6200]";
+  return "bg-[#ffe4e0] text-[#c32f27]";
 }
 
 function makeStretchId(name: string, area: string) {
@@ -296,7 +312,8 @@ function emptyDailyLog(): DailyLog {
     totalSeconds: 0,
     timedSessions: 0,
     difficultyTotal: 0,
-    difficultyEntries: 0
+    difficultyEntries: 0,
+    difficultyByStretch: {}
   };
 }
 
@@ -398,7 +415,10 @@ export default function Home() {
     reps: "",
     imageUrl: ""
   });
-  const recordStretchCompletion = useCallback((stretch: Stretch, elapsedSeconds: number) => {
+  const [difficultyOpen, setDifficultyOpen] = useState(false);
+  const [selectedDifficulty, setSelectedDifficulty] = useState(0);
+
+  const recordStretchCompletion = useCallback((stretch: Stretch, elapsedSeconds: number, difficulty: number) => {
     const stretchKey = getStretchKey(stretch);
     const today = getTodayKey();
     const roundedSeconds = Math.max(0, Math.round(elapsedSeconds));
@@ -411,6 +431,9 @@ export default function Home() {
       const nextTimedSessions = hasRecordedTime
         ? currentTiming.timedSessions + 1
         : currentTiming.timedSessions;
+      const previousSeconds = currentTiming.todayDate === today
+        ? currentTiming.todaySeconds
+        : currentTiming.todaySeconds ?? currentTiming.lastSeconds;
 
       return {
         ...current,
@@ -422,7 +445,7 @@ export default function Home() {
             totalSeconds: hasRecordedTime
               ? currentTiming.totalSeconds + roundedSeconds
               : currentTiming.totalSeconds,
-            lastSeconds: hasRecordedTime ? roundedSeconds : currentTiming.lastSeconds,
+            lastSeconds: hasRecordedTime ? previousSeconds : currentTiming.lastSeconds,
             lastCompletedDate: hasRecordedTime ? today : currentTiming.lastCompletedDate,
             todaySeconds: hasRecordedTime ? roundedSeconds : currentTiming.todaySeconds,
             todayDate: hasRecordedTime ? today : currentTiming.todayDate
@@ -439,15 +462,20 @@ export default function Home() {
             timedSessions: hasRecordedTime
               ? currentLog.timedSessions + 1
               : currentLog.timedSessions,
-            difficultyTotal: currentLog.difficultyTotal + 3,
-            difficultyEntries: currentLog.difficultyEntries + 1
+            difficultyTotal: currentLog.difficultyTotal + difficulty,
+            difficultyEntries: currentLog.difficultyEntries + 1,
+            difficultyByStretch: {
+              ...(currentLog.difficultyByStretch ?? {}),
+              [stretchKey]: difficulty
+            }
           }
         }
       };
     });
   }, []);
 
-  const recordStretchSkip = useCallback(() => {
+  const recordStretchSkip = useCallback((stretch: Stretch, difficulty: number) => {
+    const stretchKey = getStretchKey(stretch);
     const today = getTodayKey();
 
     setProgress((current) => {
@@ -460,8 +488,12 @@ export default function Home() {
           [today]: {
             ...currentLog,
             skipped: currentLog.skipped + 1,
-            difficultyTotal: currentLog.difficultyTotal + 3,
-            difficultyEntries: currentLog.difficultyEntries + 1
+            difficultyTotal: currentLog.difficultyTotal + difficulty,
+            difficultyEntries: currentLog.difficultyEntries + 1,
+            difficultyByStretch: {
+              ...(currentLog.difficultyByStretch ?? {}),
+              [stretchKey]: difficulty
+            }
           }
         }
       };
@@ -534,14 +566,20 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [isRunning, routine.length]);
 
+  const todayKey = getTodayKey();
   const activeStretch = routine[activeIndex] ?? routine[0];
+  const activeStretchKey = activeStretch ? getStretchKey(activeStretch) : "";
+  const todayLog = progress.dailyLogs[todayKey] ?? emptyDailyLog();
   const adjustedDuration = activeStretch ? Math.round(activeStretch.duration * paceMultiplier[pace]) : 0;
   const activeStretchTiming = activeStretch
-    ? progress.stretchStats[getStretchKey(activeStretch)] ?? emptyStretchTiming()
+    ? progress.stretchStats[activeStretchKey] ?? emptyStretchTiming()
     : emptyStretchTiming();
-  const activeStretchTime = activeStretchTiming.todayDate === getTodayKey()
+  const activeStretchTime = activeStretchTiming.todayDate === todayKey
     ? activeStretchTiming.todaySeconds
     : null;
+  const activeStretchLast = activeStretchTiming.todayDate === todayKey
+    ? activeStretchTiming.lastSeconds
+    : activeStretchTiming.todaySeconds ?? activeStretchTiming.lastSeconds;
   const activeStretchAverage = activeStretchTiming.timedSessions > 0
     ? Math.round(activeStretchTiming.totalSeconds / activeStretchTiming.timedSessions)
     : null;
@@ -607,7 +645,12 @@ export default function Home() {
 
   const handleStretchChange = (nextIndex: number) => {
     if (!routine.length) return;
+    const nextStretch = routine[nextIndex];
+    const nextStretchKey = getStretchKey(nextStretch);
+
     setActiveIndex(nextIndex);
+    setSelectedDifficulty(progress.dailyLogs[todayKey]?.difficultyByStretch?.[nextStretchKey] ?? 0);
+    setDifficultyOpen(false);
     setIsRunning(false);
     setSecondsLeft(0);
   };
@@ -621,9 +664,7 @@ export default function Home() {
   const handleNext = () => {
     if (!routine.length) return;
     if (activeIndex === routine.length - 1) {
-      setActiveIndex(0);
-      setSecondsLeft(0);
-      setIsRunning(false);
+      handleStretchChange(0);
       return;
     }
 
@@ -633,9 +674,7 @@ export default function Home() {
   const handleCompleteCurrent = () => {
     if (!routine.length) return;
 
-    if (!completed.includes(activeIndex)) {
-      recordStretchCompletion(activeStretch, secondsLeft);
-    }
+    recordStretchCompletion(activeStretch, secondsLeft, selectedDifficulty);
 
     setCompleted((existing) =>
       existing.includes(activeIndex) ? existing : [...existing, activeIndex]
@@ -655,7 +694,7 @@ export default function Home() {
     if (!routine.length) return;
 
     if (!completed.includes(activeIndex) && !skipped.includes(activeIndex)) {
-      recordStretchSkip();
+      recordStretchSkip(activeStretch, selectedDifficulty);
     }
 
     setSkipped((existing) =>
@@ -691,12 +730,39 @@ export default function Home() {
     handleNext();
   };
 
-  const handleReset = () => {
+  const handleResetDay = () => {
+    if (!window.confirm("This will reset today's stretch status, timer, difficulty, and daily stats only.")) return;
+
+    const today = getTodayKey();
+
     setActiveIndex(0);
     setCompleted([]);
     setSkipped([]);
+    setSelectedDifficulty(0);
+    setDifficultyOpen(false);
     setIsRunning(false);
     setSecondsLeft(0);
+    setProgress((current) => {
+      const dailyLogs = { ...current.dailyLogs };
+      delete dailyLogs[today];
+
+      return {
+        ...current,
+        dailyLogs,
+        stretchStats: Object.fromEntries(
+          Object.entries(current.stretchStats).map(([key, timing]) => [
+            key,
+            timing.todayDate === today
+              ? {
+                  ...timing,
+                  todaySeconds: null,
+                  todayDate: null
+                }
+              : timing
+          ])
+        )
+      };
+    });
   };
 
   const addCustomStretch = () => {
@@ -897,11 +963,11 @@ export default function Home() {
     setProgress(defaultProgress);
   };
 
-  const appBackground = theme === "dark" ? "bg-[#0b1020] text-white" : "bg-[#f5f5f7] text-[#111113]";
-  const mutedText = theme === "dark" ? "text-[#b9c2d5]" : "text-[#6e6e73]";
-  const panelClass = theme === "dark" ? "bg-[#111827] border border-white/10" : "bg-white";
-  const softPanelClass = theme === "dark" ? "bg-[#182235] border border-white/10" : "bg-[#f2f2f7]";
-  const navClass = theme === "dark" ? "bg-[#111827]/90 border-white/10" : "bg-white/85 border-black/10";
+  const appBackground = theme === "dark" ? "bg-[#181818] text-white" : "bg-[#eeeeef] text-[#111113]";
+  const mutedText = theme === "dark" ? "text-[#bdbdbd]" : "text-[#6e6e73]";
+  const panelClass = theme === "dark" ? "bg-[#242424] border border-white/10" : "bg-white";
+  const softPanelClass = theme === "dark" ? "bg-[#303030] border border-white/10" : "bg-[#f2f2f7]";
+  const navClass = theme === "dark" ? "bg-[#242424]/90 border-white/10" : "bg-white/85 border-black/10";
 
   if (!stretchLibrary.length) {
     return null;
@@ -910,13 +976,13 @@ export default function Home() {
   return (
     <main className={`min-h-screen ${appBackground}`}>
       <section className="mx-auto flex min-h-screen w-full max-w-md flex-col px-4 pb-[calc(92px+env(safe-area-inset-bottom))] pt-[calc(14px+env(safe-area-inset-top))] sm:max-w-lg">
-        <header className={`sticky top-0 z-10 -mx-4 px-4 pb-3 pt-[calc(8px+env(safe-area-inset-top))] backdrop-blur-xl ${theme === "dark" ? "bg-[#0b1020]/85" : "bg-[#f5f5f7]/85"}`}>
+        <header className={`sticky top-0 z-10 -mx-4 px-4 pb-3 pt-[calc(8px+env(safe-area-inset-top))] backdrop-blur-xl ${theme === "dark" ? "bg-[#181818]/85" : "bg-[#eeeeef]/85"}`}>
           <div className="flex items-center justify-between gap-3">
             {view === "today" ? (
               <div className="flex items-center gap-3">
                 <button
                   aria-label="Previous stretch"
-                  className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#182235] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
+                  className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#303030] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
                   onClick={handlePrevious}
                   type="button"
                 >
@@ -928,7 +994,7 @@ export default function Home() {
                 </div>
                 <button
                   aria-label="Next stretch"
-                  className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#182235] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
+                  className={`grid h-10 w-10 place-items-center rounded-full ${theme === "dark" ? "bg-[#303030] text-white" : "bg-white text-[#111113]"} text-2xl font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]`}
                   onClick={handleNext}
                   type="button"
                 >
@@ -940,12 +1006,12 @@ export default function Home() {
             )}
 
             <div className="flex items-center gap-2">
-              <span className={`rounded-full px-3 py-2 text-[12px] font-bold uppercase ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-white text-[#111113]"}`}>
+              <span className={`rounded-full px-3 py-2 text-[12px] font-bold uppercase ${theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-white text-[#111113]"}`}>
                 {formatShortDate()}
               </span>
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-                className={`grid h-10 w-10 place-items-center rounded-full text-lg shadow-[0_1px_2px_rgba(0,0,0,0.08)] ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-white text-[#111113]"}`}
+                className={`grid h-10 w-10 place-items-center rounded-full text-lg shadow-[0_1px_2px_rgba(0,0,0,0.08)] ${theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-white text-[#111113]"}`}
                 onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
                 type="button"
               >
@@ -966,31 +1032,34 @@ export default function Home() {
 
         {view === "today" ? (
           <>
-            <div className={`mt-4 grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 rounded-xl p-1 ${theme === "dark" ? "bg-[#182235]" : "bg-[#e5e5ea]"}`}>
-              <div className={`flex h-9 items-center justify-between rounded-lg px-3 ${theme === "dark" ? "bg-[#111827] text-white" : "bg-white text-[#111113]"} shadow-sm`}>
+            <div className={`mt-4 grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 rounded-xl p-1 ${theme === "dark" ? "bg-[#303030]" : "bg-[#e5e5ea]"}`}>
+              <div className={`flex h-9 items-center justify-between rounded-lg px-3 ${theme === "dark" ? "bg-[#242424] text-white" : "bg-white text-[#111113]"} shadow-sm`}>
                 <span className={`text-[12px] font-bold uppercase ${mutedText}`}>Timer</span>
                 <span className="text-[17px] font-bold tabular-nums">{formatTime(secondsLeft)}</span>
               </div>
               <button
-                className={`h-9 rounded-lg px-3 text-[13px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
+                aria-label="Start timer"
+                className={`grid h-9 w-10 place-items-center rounded-lg text-[15px] font-semibold ${theme === "dark" ? "bg-[#f2f2f2] text-[#242424]" : "bg-[#111113] text-white"}`}
                 onClick={() => setIsRunning(true)}
                 type="button"
               >
-                Start
+                ▶
               </button>
               <button
-                className={`h-9 rounded-lg px-3 text-[13px] font-semibold ${theme === "dark" ? "bg-[#111827] text-[#dfe8ff]" : "bg-white text-[#0b57d0]"}`}
+                aria-label="Pause timer"
+                className={`grid h-9 w-10 place-items-center rounded-lg text-[15px] font-semibold ${theme === "dark" ? "bg-[#242424] text-[#f2f2f2]" : "bg-white text-[#0b57d0]"}`}
                 onClick={() => setIsRunning(false)}
                 type="button"
               >
-                Pause
+                ‖
               </button>
               <button
-                className={`h-9 rounded-lg px-3 text-[13px] font-semibold ${theme === "dark" ? "bg-[#111827] text-[#dfe8ff]" : "bg-white text-[#0b57d0]"}`}
+                aria-label="Stop timer"
+                className={`grid h-9 w-10 place-items-center rounded-lg text-[15px] font-semibold ${theme === "dark" ? "bg-[#242424] text-[#f2f2f2]" : "bg-white text-[#0b57d0]"}`}
                 onClick={handleStopTimer}
                 type="button"
               >
-                Stop
+                ■
               </button>
             </div>
 
@@ -1030,7 +1099,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <p className={`mt-5 text-[17px] leading-7 ${theme === "dark" ? "text-[#dfe8ff]" : "text-[#3a3a3c]"}`}>
+              <p className={`mt-5 text-[17px] leading-7 ${theme === "dark" ? "text-[#f2f2f2]" : "text-[#3a3a3c]"}`}>
                 {activeStretch.note}
               </p>
 
@@ -1039,16 +1108,44 @@ export default function Home() {
                 <p className="mt-1 text-[17px] font-semibold">{activeStretch.cue}</p>
               </div>
 
-              <div className="mt-5 grid grid-cols-[1fr_auto] gap-3">
+              <div className="mt-5 grid grid-cols-[auto_1fr_auto] gap-3">
+                <div className="relative">
+                  <button
+                    className={`h-14 rounded-2xl px-3 text-[12px] font-bold ${difficultyClass(selectedDifficulty)}`}
+                    onClick={() => setDifficultyOpen((current) => !current)}
+                    type="button"
+                  >
+                    <span className="block text-[9px] uppercase">Diff</span>
+                    <span className="block text-[18px] leading-none">{selectedDifficulty}</span>
+                  </button>
+
+                  {difficultyOpen ? (
+                    <div className={`absolute bottom-16 left-0 z-10 overflow-hidden rounded-2xl p-1 shadow-lg ${theme === "dark" ? "bg-[#242424]" : "bg-white"}`}>
+                      {[0, 1, 2, 3, 4, 5].map((difficulty) => (
+                        <button
+                          className={`mb-1 grid h-9 w-12 place-items-center rounded-xl text-[14px] font-bold last:mb-0 ${difficultyClass(difficulty)}`}
+                          key={difficulty}
+                          onClick={() => {
+                            setSelectedDifficulty(difficulty);
+                            setDifficultyOpen(false);
+                          }}
+                          type="button"
+                        >
+                          {difficulty}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
                 <button
-                  className={`h-14 rounded-2xl text-[17px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"} shadow-[0_10px_20px_rgba(17,17,19,0.16)]`}
+                  className={`h-14 rounded-2xl text-[17px] font-semibold ${theme === "dark" ? "bg-[#f2f2f2] text-[#242424]" : "bg-[#111113] text-white"} shadow-[0_10px_20px_rgba(17,17,19,0.16)]`}
                   onClick={handleCompleteCurrent}
                   type="button"
                 >
                   Completed
                 </button>
                 <button
-                  className={`h-14 rounded-2xl px-5 text-[17px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}
+                  className={`h-14 rounded-2xl px-5 text-[17px] font-semibold ${theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#eef3ff] text-[#0b57d0]"}`}
                   onClick={handleSkipCurrent}
                   type="button"
                 >
@@ -1071,7 +1168,7 @@ export default function Home() {
                 <div className={`rounded-2xl ${softPanelClass} p-3`}>
                   <div className={`text-[11px] font-semibold uppercase ${mutedText}`}>Last</div>
                   <div className="mt-1 text-[14px] font-bold tabular-nums">
-                    {activeStretchTiming.lastSeconds === null ? "N/A" : formatTime(activeStretchTiming.lastSeconds)}
+                    {activeStretchLast === null ? "N/A" : formatTime(activeStretchLast)}
                   </div>
                 </div>
                 <div className={`rounded-2xl ${softPanelClass} p-3`}>
@@ -1095,9 +1192,16 @@ export default function Home() {
                 {routine.map((stretch, index) => {
                   const done = completed.includes(index);
                   const wasSkipped = skipped.includes(index);
+                  const stretchKey = getStretchKey(stretch);
+                  const stretchTiming = progress.stretchStats[stretchKey] ?? emptyStretchTiming();
+                  const stretchTime = stretchTiming.todayDate === todayKey ? stretchTiming.todaySeconds : null;
+                  const stretchAverage = stretchTiming.timedSessions > 0
+                    ? Math.round(stretchTiming.totalSeconds / stretchTiming.timedSessions)
+                    : null;
+                  const stretchDifficulty = todayLog.difficultyByStretch?.[stretchKey] ?? null;
 
                   return (
-                    <div className={`flex w-full items-center gap-3 border-b px-4 py-3 last:border-b-0 ${theme === "dark" ? "border-white/10" : "border-[#f2f2f7]"}`} key={`${stretch.name}-${index}`}>
+                    <div className={`flex w-full items-center gap-2 border-b px-3 py-3 last:border-b-0 ${theme === "dark" ? "border-white/10" : "border-[#f2f2f7]"}`} key={`${stretch.name}-${index}`}>
                       <button
                         className="flex min-w-0 flex-1 items-center gap-3 text-left"
                         onClick={() => handleStretchChange(index)}
@@ -1112,7 +1216,7 @@ export default function Home() {
                                 : index === activeIndex
                                   ? "bg-[#007aff] text-white"
                                   : theme === "dark"
-                                    ? "bg-[#182235] text-[#dfe8ff]"
+                                    ? "bg-[#303030] text-[#f2f2f2]"
                                     : "bg-[#f2f2f7] text-[#6e6e73]"
                           }`}
                         >
@@ -1122,10 +1226,33 @@ export default function Home() {
                           <strong className="block truncate text-[17px]">{stretch.name}</strong>
                           <span className={`mt-0.5 block text-[14px] ${mutedText}`}>{stretch.area}</span>
                         </span>
-                        <span className={`text-[15px] font-semibold ${theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}>
-                          {Math.round(stretch.duration * paceMultiplier[pace])}s
-                        </span>
                       </button>
+                      <div className="grid w-[156px] shrink-0 grid-cols-4 gap-1 text-center">
+                        <div>
+                          <div className={`text-[8px] font-bold uppercase ${mutedText}`}>Diff</div>
+                          <div className={`mx-auto mt-1 grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${stretchDifficulty === null ? theme === "dark" ? "bg-[#303030] text-[#bdbdbd]" : "bg-[#f2f2f7] text-[#8e8e93]" : difficultyClass(stretchDifficulty)}`}>
+                            {stretchDifficulty ?? "-"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className={`text-[8px] font-bold uppercase ${mutedText}`}>Time</div>
+                          <div className="mt-1 text-[10px] font-bold tabular-nums">
+                            {stretchTime === null ? "N/A" : formatTime(stretchTime)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className={`text-[8px] font-bold uppercase ${mutedText}`}>Avg</div>
+                          <div className="mt-1 text-[10px] font-bold tabular-nums">
+                            {stretchAverage === null ? "N/A" : formatTime(stretchAverage)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className={`text-[8px] font-bold uppercase ${mutedText}`}>Min</div>
+                          <div className="mt-1 text-[10px] font-bold tabular-nums">
+                            {Math.max(1, Math.round((stretch.duration * paceMultiplier[pace]) / 60))}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
@@ -1138,10 +1265,10 @@ export default function Home() {
                 <div className="mt-2 text-[22px] font-bold">Nice work — you finished your routine.</div>
                 <button
                   className="mt-4 h-12 rounded-xl bg-[#166c42] px-4 text-[15px] font-semibold text-white"
-                  onClick={handleReset}
+                  onClick={handleResetDay}
                   type="button"
                 >
-                  Reset routine
+                  Reset Day
                 </button>
               </div>
             ) : null}
@@ -1167,7 +1294,7 @@ export default function Home() {
                   <span className={`block text-[12px] font-semibold uppercase ${mutedText}`}>Database</span>
                   <span className="block text-[20px] font-bold">Add stretch</span>
                 </div>
-                <span className={`grid h-8 w-8 place-items-center rounded-full text-[18px] font-bold ${showAddStretch ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}>
+                <span className={`grid h-8 w-8 place-items-center rounded-full text-[18px] font-bold ${showAddStretch ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#f2f2f7] text-[#111113]"}`}>
                   {showAddStretch ? "−" : "+"}
                 </span>
               </button>
@@ -1176,13 +1303,13 @@ export default function Home() {
                 <div className="mt-4 space-y-3">
                   <div className="grid grid-cols-2 gap-2">
                     <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white placeholder:text-[#a8a8a8]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
                       onChange={(event) => setCustomStretch((current) => ({ ...current, name: event.target.value }))}
                       placeholder="Stretch name"
                       value={customStretch.name}
                     />
                     <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white placeholder:text-[#a8a8a8]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
                       onChange={(event) => setCustomStretch((current) => ({ ...current, reps: event.target.value }))}
                       placeholder="Reps"
                       value={customStretch.reps}
@@ -1191,14 +1318,14 @@ export default function Home() {
 
                   <div className="grid grid-cols-2 gap-2">
                     <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white placeholder:text-[#a8a8a8]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
                       onChange={(event) => setCustomStretch((current) => ({ ...current, duration: event.target.value }))}
                       placeholder="Seconds"
                       type="number"
                       value={customStretch.duration}
                     />
                     <input
-                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                      className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white placeholder:text-[#a8a8a8]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
                       onChange={(event) => setCustomStretch((current) => ({ ...current, area: event.target.value }))}
                       placeholder="Area"
                       value={customStretch.area}
@@ -1206,21 +1333,21 @@ export default function Home() {
                   </div>
 
                   <input
-                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white placeholder:text-[#a8a8a8]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
                     onChange={(event) => setCustomStretch((current) => ({ ...current, imageUrl: event.target.value }))}
                     placeholder="Image URL"
                     value={customStretch.imageUrl}
                   />
 
                   <input
-                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                    className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white placeholder:text-[#a8a8a8]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
                     onChange={(event) => setCustomStretch((current) => ({ ...current, cue: event.target.value }))}
                     placeholder="Cue"
                     value={customStretch.cue}
                   />
 
                   <textarea
-                    className={`min-h-[88px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white placeholder:text-[#7f8aa3]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
+                    className={`min-h-[88px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white placeholder:text-[#a8a8a8]" : "border-[#e5e5ea] bg-white text-[#111113] placeholder:text-[#8e8e93]"}`}
                     onChange={(event) => setCustomStretch((current) => ({ ...current, note: event.target.value }))}
                     placeholder="Description / notes"
                     value={customStretch.note}
@@ -1276,7 +1403,7 @@ export default function Home() {
                       <div className="flex shrink-0 items-center gap-1">
                         <button
                           aria-label={isInRoutine ? `Remove ${stretch.name} from plan` : `Add ${stretch.name} to plan`}
-                          className={`grid h-8 w-8 place-items-center rounded-full text-sm font-bold ${isInRoutine ? "bg-[#dff6e8] text-[#1f8f57]" : theme === "dark" ? "bg-[#182235] text-[#c5d2ec]" : "bg-[#f2f2f7] text-[#8e8e93]"}`}
+                          className={`grid h-8 w-8 place-items-center rounded-full text-sm font-bold ${isInRoutine ? "bg-[#dff6e8] text-[#1f8f57]" : theme === "dark" ? "bg-[#303030] text-[#d6d6d6]" : "bg-[#f2f2f7] text-[#8e8e93]"}`}
                           onClick={() => toggleStretchInRoutine(stretch)}
                           type="button"
                         >
@@ -1284,16 +1411,16 @@ export default function Home() {
                         </button>
                         <button
                           aria-label={`Edit ${stretch.name}`}
-                          className={`grid h-8 w-8 place-items-center rounded-full text-sm font-bold ${isExpanded ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                          className={`grid h-8 w-8 place-items-center rounded-full text-sm font-bold ${isExpanded ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#f2f2f7] text-[#111113]"}`}
                           onClick={() => setExpandedStretchId(isExpanded ? null : stretch.id)}
                           type="button"
                         >
                           ✎
                         </button>
-                        <div className={`flex rounded-full ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}>
+                        <div className={`flex rounded-full ${theme === "dark" ? "bg-[#303030]" : "bg-[#f2f2f7]"}`}>
                           <button
                             aria-label={`Move ${stretch.name} up`}
-                            className={`grid h-8 w-7 place-items-center text-sm font-bold ${theme === "dark" ? "text-[#dfe8ff]" : "text-[#111113]"}`}
+                            className={`grid h-8 w-7 place-items-center text-sm font-bold ${theme === "dark" ? "text-[#f2f2f2]" : "text-[#111113]"}`}
                             onClick={() => moveStretchInLibrary(stretch.id, -1)}
                             type="button"
                           >
@@ -1301,7 +1428,7 @@ export default function Home() {
                           </button>
                           <button
                             aria-label={`Move ${stretch.name} down`}
-                            className={`grid h-8 w-7 place-items-center text-sm font-bold ${theme === "dark" ? "text-[#dfe8ff]" : "text-[#111113]"}`}
+                            className={`grid h-8 w-7 place-items-center text-sm font-bold ${theme === "dark" ? "text-[#f2f2f2]" : "text-[#111113]"}`}
                             onClick={() => moveStretchInLibrary(stretch.id, 1)}
                             type="button"
                           >
@@ -1310,7 +1437,7 @@ export default function Home() {
                         </div>
                         <button
                           aria-label={`Remove ${stretch.name} from plan`}
-                          className={`grid h-8 w-8 place-items-center rounded-full text-lg font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#6e6e73]"} disabled:opacity-30`}
+                          className={`grid h-8 w-8 place-items-center rounded-full text-lg font-bold ${theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#f2f2f7] text-[#6e6e73]"} disabled:opacity-30`}
                           disabled={!isInRoutine || routine.length <= 1}
                           onClick={() => isInRoutine ? toggleStretchInRoutine(stretch) : undefined}
                           type="button"
@@ -1332,12 +1459,12 @@ export default function Home() {
 
                         <div className="grid grid-cols-2 gap-2">
                           <input
-                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                             onChange={(event) => updateStretch(stretch.id, { name: event.target.value })}
                             value={stretch.name}
                           />
                           <input
-                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                             onChange={(event) => updateStretch(stretch.id, { reps: event.target.value })}
                             placeholder="Reps"
                             value={stretch.reps || ""}
@@ -1346,33 +1473,33 @@ export default function Home() {
 
                         <div className="grid grid-cols-2 gap-2">
                           <input
-                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                             onChange={(event) => updateStretch(stretch.id, { duration: Number(event.target.value) || 0 })}
                             type="number"
                             value={stretch.duration}
                           />
                           <input
-                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                            className={`h-11 rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                             onChange={(event) => updateStretch(stretch.id, { area: event.target.value })}
                             value={stretch.area}
                           />
                         </div>
 
                         <input
-                          className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                          className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                           onChange={(event) => updateStretch(stretch.id, { imageUrl: event.target.value })}
                           placeholder="Image URL"
                           value={stretch.imageUrl || ""}
                         />
 
                         <input
-                          className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                          className={`h-11 w-full rounded-xl border px-3 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                           onChange={(event) => updateStretch(stretch.id, { cue: event.target.value })}
                           value={stretch.cue}
                         />
 
                         <textarea
-                          className={`min-h-[88px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                          className={`min-h-[88px] w-full rounded-xl border px-3 py-2 text-[14px] outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                           onChange={(event) => updateStretch(stretch.id, { note: event.target.value })}
                           value={stretch.note}
                         />
@@ -1418,7 +1545,7 @@ export default function Home() {
                   <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Weekly stats</div>
                   <div className="text-[30px] font-bold">{completedWeeklyStretches} stretches</div>
                 </div>
-                <span className={`rounded-full px-3 py-1 text-[12px] font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#eef3ff] text-[#0b57d0]"}`}>
+                <span className={`rounded-full px-3 py-1 text-[12px] font-bold ${theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#eef3ff] text-[#0b57d0]"}`}>
                   {weeklyStatsOpen ? "Hide" : "Show"}
                 </span>
               </button>
@@ -1450,7 +1577,7 @@ export default function Home() {
                           hasProgress
                             ? "bg-[#34c759] text-white"
                             : theme === "dark"
-                              ? "bg-[#182235] text-[#c5d2ec]"
+                              ? "bg-[#303030] text-[#d6d6d6]"
                               : "bg-[#f2f2f7] text-[#8e8e93]"
                         }`}>
                           {day}
@@ -1458,7 +1585,7 @@ export default function Home() {
                         <div className={`mt-1 text-[10px] font-bold ${mutedText}`}>{log.completed}</div>
 
                         {weeklyStatsOpen ? (
-                          <div className={`mt-2 rounded-xl p-2 ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}>
+                          <div className={`mt-2 rounded-xl p-2 ${theme === "dark" ? "bg-[#303030]" : "bg-[#f2f2f7]"}`}>
                             <div className="text-[10px] font-bold text-[#166c42]">{completePct}%</div>
                             <div className={`text-[8px] font-semibold uppercase ${mutedText}`}>Done</div>
                             <div className={`mx-auto mt-2 h-2 w-2 rounded-full ${difficultyColor}`} />
@@ -1517,7 +1644,7 @@ export default function Home() {
                           : hasProgress
                             ? "bg-[#34c759]/20 text-[#166c42]"
                             : theme === "dark"
-                              ? "bg-[#182235] text-[#c5d2ec]"
+                              ? "bg-[#303030] text-[#d6d6d6]"
                               : "bg-[#f2f2f7] text-[#6e6e73]"
                       }`}
                       key={dateKey}
@@ -1530,7 +1657,7 @@ export default function Home() {
                 })}
               </div>
 
-              <div className={`mt-4 rounded-2xl p-3 ${theme === "dark" ? "bg-[#182235]" : "bg-[#f2f2f7]"}`}>
+              <div className={`mt-4 rounded-2xl p-3 ${theme === "dark" ? "bg-[#303030]" : "bg-[#f2f2f7]"}`}>
                 <div className="flex items-center justify-between">
                   <h4 className="font-bold">
                     {new Date(`${selectedCalendarDate}T00:00:00`).toLocaleDateString("en", {
@@ -1544,15 +1671,15 @@ export default function Home() {
                   </span>
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                  <div className={`${theme === "dark" ? "bg-[#111827]" : "bg-white"} rounded-2xl p-3`}>
+                  <div className={`${theme === "dark" ? "bg-[#242424]" : "bg-white"} rounded-2xl p-3`}>
                     <div className={`text-[10px] font-semibold uppercase ${mutedText}`}>Complete</div>
                     <div className="mt-1 text-[20px] font-bold">{selectedCompletionPct}%</div>
                   </div>
-                  <div className={`${theme === "dark" ? "bg-[#111827]" : "bg-white"} rounded-2xl p-3`}>
+                  <div className={`${theme === "dark" ? "bg-[#242424]" : "bg-white"} rounded-2xl p-3`}>
                     <div className={`text-[10px] font-semibold uppercase ${mutedText}`}>Difficulty</div>
                     <div className="mt-1 text-[20px] font-bold">{selectedDifficultyPct}%</div>
                   </div>
-                  <div className={`${theme === "dark" ? "bg-[#111827]" : "bg-white"} rounded-2xl p-3`}>
+                  <div className={`${theme === "dark" ? "bg-[#242424]" : "bg-white"} rounded-2xl p-3`}>
                     <div className={`text-[10px] font-semibold uppercase ${mutedText}`}>Avg. time</div>
                     <div className="mt-1 text-[14px] font-bold tabular-nums">
                       {selectedAvgSeconds === null ? "N/A" : formatTime(selectedAvgSeconds)}
@@ -1584,7 +1711,7 @@ export default function Home() {
                   <div className={`text-[12px] font-semibold uppercase ${mutedText}`}>Daily goal</div>
                   <div className="mt-1 text-[24px] font-bold">{settings.dailyGoalMinutes} min</div>
                 </div>
-                <span className={`grid h-8 w-8 place-items-center rounded-full text-[18px] font-bold ${dailyGoalOpen ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}>
+                <span className={`grid h-8 w-8 place-items-center rounded-full text-[18px] font-bold ${dailyGoalOpen ? "bg-[#007aff] text-white" : theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#f2f2f7] text-[#111113]"}`}>
                   {dailyGoalOpen ? "−" : "+"}
                 </span>
               </button>
@@ -1594,7 +1721,7 @@ export default function Home() {
                   <div className="flex items-center gap-3">
                     <input
                       aria-label="Daily goal minutes"
-                      className={`h-11 w-24 rounded-xl border px-3 text-right text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#182235] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      className={`h-11 w-24 rounded-xl border px-3 text-right text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#303030] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                       min={1}
                       max={90}
                       onChange={(event) =>
@@ -1650,7 +1777,7 @@ export default function Home() {
                 </div>
                 <button
                   aria-label="Add reminder"
-                  className={`grid h-10 w-10 place-items-center rounded-full text-[22px] font-bold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                  className={`grid h-10 w-10 place-items-center rounded-full text-[22px] font-bold ${theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#f2f2f7] text-[#111113]"}`}
                   onClick={addReminder}
                   type="button"
                 >
@@ -1666,14 +1793,14 @@ export default function Home() {
                   >
                     <input
                       aria-label={`Reminder ${index + 1}`}
-                      className={`h-11 rounded-xl border px-3 text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#111827] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
+                      className={`h-11 rounded-xl border px-3 text-[16px] font-semibold outline-none ${theme === "dark" ? "border-white/10 bg-[#242424] text-white" : "border-[#e5e5ea] bg-white text-[#111113]"}`}
                       onChange={(event) => updateReminder(index, event.target.value)}
                       type="time"
                       value={reminder}
                     />
                     <button
                       aria-label={`Delete reminder ${index + 1}`}
-                      className={`grid h-10 w-10 place-items-center rounded-full text-[20px] font-bold ${theme === "dark" ? "bg-[#111827] text-[#dfe8ff]" : "bg-white text-[#6e6e73]"}`}
+                      className={`grid h-10 w-10 place-items-center rounded-full text-[20px] font-bold ${theme === "dark" ? "bg-[#242424] text-[#f2f2f2]" : "bg-white text-[#6e6e73]"}`}
                       onClick={() => removeReminder(index)}
                       type="button"
                     >
@@ -1688,7 +1815,7 @@ export default function Home() {
               <h3 className="text-[20px] font-bold">Sessions reset</h3>
               <p className={`mt-1 text-[14px] ${mutedText}`}>Clear only recorded stretch session counts.</p>
               <button
-                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#f2f2f7] text-[#111113]"}`}
                 onClick={resetSessionCounts}
                 type="button"
               >
@@ -1700,7 +1827,7 @@ export default function Home() {
               <h3 className="text-[20px] font-bold">Timer reset</h3>
               <p className={`mt-1 text-[14px] ${mutedText}`}>Clear saved stretch times and averages.</p>
               <button
-                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#182235] text-[#dfe8ff]" : "bg-[#f2f2f7] text-[#111113]"}`}
+                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#303030] text-[#f2f2f2]" : "bg-[#f2f2f7] text-[#111113]"}`}
                 onClick={resetRecordedTimes}
                 type="button"
               >
@@ -1712,7 +1839,7 @@ export default function Home() {
               <h3 className="text-[20px] font-bold">Progress reset</h3>
               <p className={`mt-1 text-[14px] ${mutedText}`}>Clear all saved information and progress data.</p>
               <button
-                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#dfe8ff] text-[#111827]" : "bg-[#111113] text-white"}`}
+                className={`mt-4 h-12 w-full rounded-xl text-[15px] font-semibold ${theme === "dark" ? "bg-[#f2f2f2] text-[#242424]" : "bg-[#111113] text-white"}`}
                 onClick={resetAllProgress}
                 type="button"
               >
@@ -1725,31 +1852,31 @@ export default function Home() {
         <nav className={`fixed inset-x-0 bottom-0 z-20 border-t px-6 pb-[calc(10px+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl ${navClass}`}>
           <div className="mx-auto grid max-w-md grid-cols-4">
             <button
-              className={`ios-tab ${view === "today" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
+              className={`ios-tab ${view === "today" ? "text-[#007aff]" : theme === "dark" ? "text-[#d6d6d6]" : "text-[#8e8e93]"}`}
               onClick={() => setView("today")}
               type="button"
             >
-              <span>●</span>
+              <span className={`grid h-5 w-5 place-items-center rounded-full border-2 ${view === "today" ? "border-[#007aff] bg-[#007aff]" : "border-current"}`} />
               <span>Today</span>
             </button>
             <button
-              className={`ios-tab ${view === "stats" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
+              className={`ios-tab ${view === "stats" ? "text-[#007aff]" : theme === "dark" ? "text-[#d6d6d6]" : "text-[#8e8e93]"}`}
               onClick={() => setView("stats")}
               type="button"
             >
-              <span>◌</span>
+              <span className={`grid h-5 w-5 place-items-center rounded-full border-2 ${view === "stats" ? "border-[#007aff] bg-[#007aff]" : "border-current"}`} />
               <span>Stats</span>
             </button>
             <button
-              className={`ios-tab ${view === "plans" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
+              className={`ios-tab ${view === "plans" ? "text-[#007aff]" : theme === "dark" ? "text-[#d6d6d6]" : "text-[#8e8e93]"}`}
               onClick={() => setView("plans")}
               type="button"
             >
-              <span>○</span>
+              <span className={`grid h-5 w-5 place-items-center rounded-full border-2 ${view === "plans" ? "border-[#007aff] bg-[#007aff]" : "border-current"}`} />
               <span>Plans</span>
             </button>
             <button
-              className={`ios-tab ${view === "settings" ? "text-[#007aff]" : theme === "dark" ? "text-[#c5d2ec]" : "text-[#8e8e93]"}`}
+              className={`ios-tab ${view === "settings" ? "text-[#007aff]" : theme === "dark" ? "text-[#d6d6d6]" : "text-[#8e8e93]"}`}
               onClick={() => setView("settings")}
               type="button"
             >
@@ -1762,3 +1889,4 @@ export default function Home() {
     </main>
   );
 }
+
